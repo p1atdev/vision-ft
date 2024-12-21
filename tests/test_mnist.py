@@ -4,15 +4,15 @@ from src.dataset.mnist import MnistDatasetConfig
 from src.models.mnist import MnistModelForTraining, MnistConfig
 from src.config import TrainConfig
 
-import torch.nn.functional as F
-from lightning.fabric import Fabric
+
+from accelerate import Accelerator
 
 
 def test_train_step():
     # Initialize model configuration and model for training
     config = MnistConfig()
     model_for_training = MnistModelForTraining(
-        fabric=Fabric(accelerator="cpu"),
+        accelerator=Accelerator(cpu=True),
         config=TrainConfig(
             **{
                 "model": config,

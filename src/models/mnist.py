@@ -44,21 +44,20 @@ class MnistModelForTraining(ModelForTraining, nn.Module):
     model_config_class = MnistConfig
 
     def setup_model(self):
-        with self.fabric.rank_zero_first():
+        with self.accelerator.main_process_first():
             print("Initializing model")
-            with self.fabric.init_module():
-                model = MnistModel(self.model_config)
 
-        self.fabric.barrier()
+            model = MnistModel(self.model_config)
 
-        # model = self.fabric.broadcast(model)
-        self.model = self.fabric.setup_module(model)
+        self.accelerator.wait_for_everyone()
+
+        self.model = self.accelerator.prepare_model(model)
 
     @torch.no_grad()
     def sanity_check(self):
-        with self.fabric.autocast():
+        with self.accelerator.autocast():
             pixel_values = torch.randn(1, self.model_config.num_pixels)
-            logits = self.model(self.fabric.to_device(pixel_values))
+            logits = self.model(pixel_values.to(self.accelerator.device))
             assert logits.shape == (1, self.model_config.num_labels)
 
     def log_metrics(self, logits: torch.Tensor, targets: torch.Tensor):

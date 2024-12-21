@@ -8,7 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
 
-from lightning.fabric import Fabric
+from accelerate import Accelerator
+from transformers import set_seed
 
 from .optimizer import get_optimizer
 from .scheduler import get_scheduler, NothingScheduler
@@ -20,7 +21,7 @@ from .utils.logging import get_trackers
 
 
 class ModelForTraining(ABC):
-    fabric: Fabric
+    accelerator: Accelerator
     config: TrainConfig
     model_config: BaseModel
     model_config_class: type[BaseModel]
@@ -35,7 +36,7 @@ class ModelForTraining(ABC):
 
     def __init__(
         self,
-        fabric: Fabric,
+        accelerator: Accelerator,
         config: TrainConfig,
         *args,
         **kwargs,
@@ -43,7 +44,7 @@ class ModelForTraining(ABC):
         super().__init__()
 
         self.config = config
-        self.fabric = fabric
+        self.accelerator = accelerator
 
         self.validate_config()
 
@@ -73,9 +74,9 @@ class ModelForTraining(ABC):
         else:
             scheduler = NothingScheduler(optimizer)
 
-        self.optimizer = self.fabric.setup_optimizers(
+        self.optimizer = self.accelerator.prepare_optimizer(
             optimizer,
-        )  # type: ignore  # Fabric's setup_optimizers method may not be recognized by type checkers
+        )  # type: ignore  # Accelerator's prepare_optimizer method may not be recognized by type checkers
         self.scheduler = scheduler
 
     @abstractmethod
@@ -89,7 +90,7 @@ class ModelForTraining(ABC):
     def backward(self, loss: torch.Tensor):
         self.before_backward()
 
-        self.fabric.backward(loss)
+        self.accelerator.backward(loss)
 
         self.after_backward()
 
@@ -151,7 +152,7 @@ class ModelForTraining(ABC):
         pass
 
     def print(self, *args, **kwargs):
-        self.fabric.print(*args, **kwargs)
+        self.accelerator.print(*args, **kwargs)
 
     def log(
         self,
@@ -162,7 +163,8 @@ class ModelForTraining(ABC):
     ):
         if isinstance(value, torch.Tensor):
             with torch.no_grad():
-                value = self.fabric.all_gather(value)
+                value = self.accelerator.gather(value)
+                assert isinstance(value, torch.Tensor)
                 value = value.mean().item()
 
         if on_step:
@@ -173,7 +175,7 @@ class ModelForTraining(ABC):
             self._logs_at_epoch[name].append(value)
 
     def _send_logs_at_step(self):
-        self.fabric.log_dict(self._logs_at_step, step=self._current_step)
+        self.accelerator.log(self._logs_at_step, step=self._current_step)
         self._logs_at_step = {}
 
     def _send_logs_at_epoch(self):
@@ -182,14 +184,15 @@ class ModelForTraining(ABC):
                 values = [v.mean().item() for v in values]
 
             if isinstance(values[0], float) or isinstance(values[0], int):
-                self.fabric.log(
-                    f"{name}_epoch",
-                    sum(values) / len(values),
+                self.accelerator.log(
+                    {f"{name}_epoch": sum(values) / len(values)},
                     step=self._current_step,
                 )
             else:
                 for i, value in enumerate(values):
-                    self.fabric.log(f"{name}_{i}_epoch", value, step=self._current_step)
+                    self.accelerator.log(
+                        {f"{name}_{i}_epoch": value}, step=self._current_step
+                    )
         self._logs_at_epoch = {}
 
     def _log_metadata(self):
@@ -220,15 +223,15 @@ class Trainer:
         self.seed = seed
         self.only_sanity_check = only_sanity_check
 
-        self.fabric = Fabric(
-            loggers=get_trackers(config.trackers)
+        self.accelerator = Accelerator(
+            log_with=get_trackers(config.trackers)
             if not only_sanity_check and config.trackers is not None
             else [],
         )
 
     def register_model_class(self, model_cls, *args, **kwargs):
         self.model_cls = model_cls
-        self.model = model_cls(self.fabric, self.config, *args, **kwargs)
+        self.model = model_cls(self.accelerator, self.config, *args, **kwargs)
 
     def register_dataset_class(
         self, dataset_config_class: type[DatasetConfig], *args, **kwargs
@@ -242,7 +245,7 @@ class Trainer:
                 warnings.warn("No saving callbacks found in the config")
             return [get_saving_callback(callback) for callback in saving.callbacks]
 
-        self.fabric.print("No saving config. Model will not be saved.")
+        self.accelerator.print("No saving config. Model will not be saved.")
         return []
 
     def prepare_dataloaders(self):
@@ -260,8 +263,8 @@ class Trainer:
             shuffle=False,
             num_workers=self.dataset_config.num_workers,
         )
-        self.train_dataloader, self.eval_dataloader = self.fabric.setup_dataloaders(
-            train_dataloader, eval_dataloader
+        self.train_dataloader, self.eval_dataloader = (
+            self.accelerator.prepare_data_loader(train_dataloader, eval_dataloader)
         )
 
     def prepare_saving_strategy(self):
@@ -284,7 +287,7 @@ class Trainer:
     def before_train(self):
         self.print("before_train()")
         self.print(f"Seed: {self.seed}")
-        self.fabric.seed_everything(self.seed)
+        set_seed(self.seed)
 
         self.print("Setting up dataloaders")
         self.prepare_dataloaders()
@@ -372,10 +375,10 @@ class Trainer:
         self.after_train()
 
     def print(self, *args, **kwargs):
-        self.fabric.print(*args, **kwargs)
+        self.accelerator.print(*args, **kwargs)
 
     def log(self, *args, **kwargs):
         if self.only_sanity_check:
             return
 
-        self.fabric.log(*args, **kwargs)
+        self.accelerator.log(*args, **kwargs)
