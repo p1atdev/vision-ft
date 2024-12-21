@@ -3,35 +3,34 @@ name = "lit-template"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "torch<2.5,>=2.4",
-    "torchvision>=0.19.0",
+    "torch>=2.5,<2.6",
+    "torchvision>=0.20",
     "safetensors>=0.4.5",
     "hf-transfer>=0.1.8",
     "wandb>=0.19.1",
     "tqdm>=4.67.1",
     "pyyaml>=6.0.2",
-    "lightning>=2.4.0",
-    "pydantic>=2.10.2",
-    "transformers>=4.47.0",
+    "lightning>=2.5.0.post0",
+    "pydantic>=2.10.4",
+    "transformers>=4.47.1",
     "datasets>=3.2.0",
     "webdataset>=0.2.100",
     "torchmetrics>=1.6.0",
+    "bitsandbytes>=0.45.0",
+    "schedulefree>=1.4",
 ]
 
 [tool.uv]
 dev-dependencies = [
     "jupyter>=1.1.1",
-    "ruff>=0.8.3",
+    "ruff>=0.8.4",
     "ipykernel>=6.29.5",
-    "matplotlib>=3.9.4",
+    "matplotlib>=3.10.0",
     "pytest>=8.3.4",
 ]
 
-[project.optional-dependencies]
-optimizers = ["schedulefree", "lion-pytorch", "prodigyopt"]
-quant = ["bitsandbytes"]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu124", marker = "platform_system != 'Darwin'" }]
