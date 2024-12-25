@@ -7,6 +7,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
     UMT5EncoderModel,
+    UMT5Config,
 )
 
 DEFAULT_TEXT_ENCODER_CONFIG = {
@@ -39,6 +40,7 @@ DEFAULT_TEXT_ENCODER_CONFIG = {
     "vocab_size": 32128,
 }
 DEFAULT_TEXT_ENCODER_CLASS = UMT5EncoderModel
+DEFAULT_TEXT_ENCODER_CONFIG_CLASS = UMT5Config
 TEXT_ENCODER_TENSOR_PREFIX = "text_encoders.pile_t5xl.transformer."
 DEFAULT_TOKENIZER_REPO = "fal/AuraFlow-v0.3"
 DEFAULT_TOKENIZER_FOLDER = "tokenizer"

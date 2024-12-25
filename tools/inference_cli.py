@@ -10,7 +10,7 @@ torch.set_float32_matmul_precision("high")
 
 
 def main(
-    model_name_or_path: str,
+    checkpoint_path: str,
     width: int = 768,
     height: int = 768,
     batch_size: int = 1,
@@ -19,15 +19,15 @@ def main(
 ):
     accelerator = Accelerator()
 
-    config = AuraFlowConig(pretrained_model_name_or_path=model_name_or_path)
+    config = AuraFlowConig(checkpoint_path=checkpoint_path)
 
     with accelerator.main_process_first():
-        denoiser, vae, text_encoder = load_models(config)
+        model = load_models(config)
 
     accelerator.wait_for_everyone()
-    denoiser, vae, text_encoder = broadcast_object_list((denoiser, vae, text_encoder))
+    model = broadcast_object_list(model)
 
-    print(denoiser)
+    print(model)
 
     # Run inference
     # ...

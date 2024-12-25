@@ -192,6 +192,7 @@ dependencies = [
     { name = "bitsandbytes" },
     { name = "datasets" },
     { name = "diffusers" },
+    { name = "flash-attn" },
     { name = "hf-transfer" },
     { name = "lightning" },
     { name = "pydantic" },
@@ -213,6 +214,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "fire" },
+    { name = "huggingface-dl" },
     { name = "ipykernel" },
     { name = "jupyter" },
     { name = "matplotlib" },
@@ -225,7 +227,8 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.2.1" },
     { name = "bitsandbytes", specifier = ">=0.45.0" },
     { name = "datasets", specifier = ">=3.2.0" },
-    { name = "diffusers", specifier = ">=0.31.0" },
+    { name = "diffusers", specifier = ">=0.32.0" },
+    { name = "flash-attn", specifier = ">=2.7.2.post1" },
     { name = "hf-transfer", specifier = ">=0.1.8" },
     { name = "lightning", specifier = ">=2.5.0.post0" },
     { name = "pydantic", specifier = ">=2.10.4" },
@@ -247,6 +250,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "fire", specifier = ">=0.7.0" },
+    { name = "huggingface-dl", git = "https://github.com/p1atdev/huggingface_dl" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "matplotlib", specifier = ">=3.10.0" },
@@ -487,7 +491,7 @@ wheels = [
 
 [[package]]
 name = "diffusers"
-version = "0.31.0"
+version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -499,9 +503,9 @@ dependencies = [
     { name = "requests" },
     { name = "safetensors" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/78/5d/156acb741303abbee214926804c5f0d09eacd35d05ad942577e996acdac3/diffusers-0.31.0.tar.gz", hash = "sha256:b1d01a73e45d43a0630c299173915dddd69fc50f2ae8f2ab5de4fd245eaed72f", size = 2308202 }
+sdist = { url = "https://files.pythonhosted.org/packages/12/fa/48b5be99873a1e5916663c0baab408cb5b74b0a060854e5ff06b54b7630c/diffusers-0.32.0.tar.gz", hash = "sha256:a99ebc2e645b9417e06646bc4c82e26099b4dd9d01b4b717153b061bd62b1032", size = 2617524 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/7f/53828ff41b86c3274099327627ff5cb7581a2cc9db3bcb39e5212c4140b7/diffusers-0.31.0-py3-none-any.whl", hash = "sha256:cbc498ae63f4abfc7c3a07649cdcbee229ef2f9a9a1f0d19c9bbaf22f8d30c1f", size = 2873496 },
+    { url = "https://files.pythonhosted.org/packages/7b/d8/0fe86ea4c22bc555b63b72148bde055cf32cd0b839bdc4aee0eece7f4a92/diffusers-0.32.0-py3-none-any.whl", hash = "sha256:81d878e9fb6515c3155d3698168102d637b86ccad8bba44c418fefb6b5ed5428", size = 3224169 },
 ]
 
 [[package]]
@@ -523,6 +527,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c5/e6/d1f6c00b7221e2d7c4b470132c931325c8b22c51ca62417e300f5ce16009/docker-pycreds-0.4.0.tar.gz", hash = "sha256:6ce3270bcaf404cc4c3e27e4b6c70d3521deae82fb508767870fdbf772d584d4", size = 8754 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f5/e8/f6bd1eee09314e7e6dee49cbe2c5e22314ccdb38db16c9fc72d2fa80d054/docker_pycreds-0.4.0-py2.py3-none-any.whl", hash = "sha256:7266112468627868005106ec19cd0d722702d2b7d5912a28e19b826c3d37af49", size = 8982 },
+]
+
+[[package]]
+name = "einops"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/ca/9f5dcb8bead39959454c3912266bedc4c315839cee0e0ca9f4328f4588c1/einops-0.8.0.tar.gz", hash = "sha256:63486517fed345712a8385c100cb279108d9d47e6ae59099b07657e983deae85", size = 58861 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/5a/f0b9ad6c0a9017e62d4735daaeb11ba3b6c009d69a26141b258cd37b5588/einops-0.8.0-py3-none-any.whl", hash = "sha256:9572fb63046264a862693b0a87088af3bdc8c068fde03de63453cbbde245465f", size = 43223 },
 ]
 
 [[package]]
@@ -560,6 +573,17 @@ dependencies = [
     { name = "termcolor" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6b/b6/82c7e601d6d3c3278c40b7bd35e17e82aa227f050aa9f66cb7b7fce29471/fire-0.7.0.tar.gz", hash = "sha256:961550f07936eaf65ad1dc8360f2b2bf8408fad46abbfa4d2a3794f8d2a95cdf", size = 87189 }
+
+[[package]]
+name = "flash-attn"
+version = "2.7.2.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "einops" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_system == 'Darwin'" },
+    { name = "torch", version = "2.5.1+cu124", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "platform_system != 'Darwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/83/29/48df18cb51902a7cb7a0ee13327bb2cf50b6ba24bd2e8283d0a9538dde52/flash_attn-2.7.2.post1.tar.gz", hash = "sha256:574897afeb6cbd63e78a612dded95491efe4a46818245cf1a5ace7357d993faa", size = 3136637 }
 
 [[package]]
 name = "fonttools"
@@ -701,6 +725,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517 },
+]
+
+[[package]]
+name = "huggingface-dl"
+version = "0.0.2"
+source = { git = "https://github.com/p1atdev/huggingface_dl#bfbfb1ca5d60fca9b58892a81c701d89bb3594ca" }
+dependencies = [
+    { name = "huggingface-hub" },
 ]
 
 [[package]]

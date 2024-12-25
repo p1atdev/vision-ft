@@ -20,9 +20,10 @@ dependencies = [
     "torchmetrics>=1.6.0",
     "bitsandbytes>=0.45.0",
     "schedulefree>=1.4",
-    "diffusers>=0.31.0",
+    "diffusers>=0.32.0",
     "sentencepiece>=0.2.0",
     "accelerate>=1.2.1",
+    "flash-attn>=2.7.2.post1",
 ]
 
 [tool.uv]
@@ -33,7 +34,9 @@ dev-dependencies = [
     "matplotlib>=3.10.0",
     "pytest>=8.3.4",
     "fire>=0.7.0",
+    "huggingface-dl",
 ]
+no-build-isolation-package = ["flash-attn"]
 
 
 [tool.hatch.build.targets.wheel]
@@ -48,6 +51,7 @@ torch = [{ index = "pytorch-cu124", marker = "platform_system != 'Darwin'" }]
 torchvision = [
     { index = "pytorch-cu124", marker = "platform_system != 'Darwin'" },
 ]
+huggingface-dl = { git = "https://github.com/p1atdev/huggingface_dl" }
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
