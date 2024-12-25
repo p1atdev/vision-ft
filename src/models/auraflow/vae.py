@@ -35,6 +35,10 @@ DEFAULT_VAE_CONFIG = {
 }
 VAE_TENSOR_PREFIX = "vae."
 
+AURA_VAE_COMPRESSION_RATIO = 8  # same as SDXL's VAE
+AURA_VAE_SCALING_FACTOR = 0.13025  # same as SDXL's VAE
+
 
 class VAE(AutoencoderKL, nn.Module):
-    pass
+    compression_ratio = AURA_VAE_COMPRESSION_RATIO
+    scaling_factor = AURA_VAE_SCALING_FACTOR

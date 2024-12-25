@@ -631,8 +631,8 @@ class MMDiT(nn.Module):
         h_p, w_p = h // self.patch_size, w // self.patch_size
         original_pe_indexes = torch.arange(self.positional_encoding.shape[1])
         h_max, w_max = (
-            int(self.max_seq_len**0.5),
-            int(self.max_seq_len**0.5),
+            int(self.max_pos_embed_size**0.5),
+            int(self.max_pos_embed_size**0.5),
         )
         original_pe_indexes = original_pe_indexes.view(h_max, w_max)
         starth = h_max // 2 - h_p // 2
@@ -706,8 +706,8 @@ class MMDiT(nn.Module):
     def forward(
         self,
         latent: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
         timesteps: torch.Tensor,
-        conditions: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
         batch_size, _in_channels, height, width = latent.shape
@@ -717,10 +717,10 @@ class MMDiT(nn.Module):
         patches = self.init_x_linear(patches)  # project
         # add positional encoding
         pos_idx = self.pe_selection_index_based_on_dim(height, width)
-        patches = patches + self.positional_encoding[:, :pos_idx]
+        patches = patches + self.positional_encoding[:, pos_idx]
 
         # 2. condition sequence
-        cond_sequences = conditions[:batch_size]
+        cond_sequences = encoder_hidden_states[:batch_size]
         cond_tokens = self.cond_seq_linear(cond_sequences)
         cond_tokens = torch.cat(
             [self.register_tokens.repeat(cond_tokens.size(0), 1, 1), cond_tokens], dim=1
@@ -750,10 +750,10 @@ class MMDiT(nn.Module):
         patches = self.final_linear(patches)
 
         # 6. unpatchify
-        latent = self.unpatchify(
+        noise_prediction = self.unpatchify(
             patches, height // self.patch_size, width // self.patch_size
         )
-        return latent
+        return noise_prediction
 
 
 class Denoiser(
