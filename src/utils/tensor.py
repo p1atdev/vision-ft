@@ -52,11 +52,15 @@ def tensor_to_images(
     tensor: torch.Tensor,
 ) -> list[Image.Image]:
     # -1~1 -> 0~255
-    return [
-        Image.fromarray(
-            ((image.permute(1, 2, 0).cpu().float().numpy() + 1.0) * 127.5).astype(
-                np.uint8
-            )
-        )
-        for image in tensor
-    ]
+
+    # denormalize
+    tensor = tensor.clamp(-1.0, 1.0)
+    tensor = (tensor + 1.0) / 2.0 * 255.0
+
+    # permute
+    tensor = tensor.permute(0, 2, 3, 1)  # [B, C, H, W] -> [B, H, W, C]
+
+    # convert to numpy array
+    image_array = tensor.cpu().float().numpy().astype(np.uint8)
+
+    return [Image.fromarray(image) for image in image_array]

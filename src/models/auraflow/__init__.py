@@ -127,7 +127,7 @@ class AuraFlowModel(nn.Module):
             _images, self.vae.dtype, self.vae.device
         )
         encode_output = self.vae.encode(_images)
-        latents = encode_output[0].sample()
+        latents = encode_output[0].sample() * self.vae.scaling_factor
 
         return latents
 
@@ -153,7 +153,9 @@ class AuraFlowModel(nn.Module):
         num_inference_steps: int = 20,
         cfg_scale: float = 1.0,
         seed: int | None = None,
+        max_token_length: int = 256,
         device: torch.device | str = torch.device("cuda"),
+        do_offloading: bool = False,
     ) -> list[Image.Image]:
         # 1. Prepare args
         execution_device = device
@@ -162,15 +164,21 @@ class AuraFlowModel(nn.Module):
         timesteps, num_inference_steps = self.scheduler.retrieve_timesteps(
             num_inference_steps,
             execution_device,
+            sigmas=None,
         )
         batch_size = len(prompt) if isinstance(prompt, list) else 1
 
         # 2. Encode text
-        self.text_encoder.to(device)
+        if do_offloading:
+            self.text_encoder.to(device)
         encoder_output = self.text_encoder.encode_prompts(
-            prompt, negative_prompt, use_negative_prompts=do_cfg
+            prompt,
+            negative_prompt,
+            use_negative_prompts=do_cfg,
+            max_token_length=max_token_length,
         )
-        self.text_encoder.to("cpu")
+        if do_offloading:
+            self.text_encoder.to("cpu")
 
         # 3. Prepare latents.
         latents = self.prepare_latents(
@@ -183,45 +191,49 @@ class AuraFlowModel(nn.Module):
         )
 
         # 4. Denoising loop
-        self.denoiser.to(device)
+        if do_offloading:
+            self.denoiser.to(device)
         num_warmup_steps = max(
             len(timesteps) - num_inference_steps * self.scheduler.order, 0
         )
+        latents = latents.to(self.denoiser.device)
+        prompt_embeddings = torch.cat(
+            [
+                encoder_output.positive_embeddings,
+                encoder_output.negative_embeddings,
+            ]
+        ).to(self.denoiser.device)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, time in enumerate(timesteps):
+            # current_timestep is 1000.0 -> 0
+            for i, current_timestep in enumerate(timesteps):
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_cfg else latents
 
                 # aura use timestep value between 0 and 1, with t=1 as noise and t=0 as the image
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = torch.tensor([time / 1000]).expand(
+                batch_timestep = torch.tensor([current_timestep / 1000]).expand(
                     latent_model_input.shape[0]
                 )
-                timestep = timestep.to(latents.device, dtype=latents.dtype)
+                batch_timestep = batch_timestep.to(latents.device, dtype=latents.dtype)
 
                 # predict noise model_output
                 noise_pred = self.denoiser(
                     latent=latent_model_input,
-                    encoder_hidden_states=torch.cat(
-                        [
-                            encoder_output.positive_embeddings,
-                            encoder_output.negative_embeddings,
-                        ]
-                    ),
-                    timesteps=timesteps,
+                    encoder_hidden_states=prompt_embeddings,
+                    timestep=batch_timestep,
                 )
 
                 # perform cfg
                 if do_cfg:
-                    noise_pred_text, noise_pred_uncond = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + cfg_scale * (
-                        noise_pred_text - noise_pred_uncond
+                    noise_pred_positive, noise_pred_negative = noise_pred.chunk(2)
+                    noise_pred = noise_pred_negative + cfg_scale * (
+                        noise_pred_positive - noise_pred_negative
                     )
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
                     noise_pred,
-                    time,
+                    current_timestep,
                     latents,
                     return_dict=False,
                 )[0]
@@ -231,12 +243,15 @@ class AuraFlowModel(nn.Module):
                     (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
                 ):
                     progress_bar.update()
-        self.denoiser.to("cpu")
+        if do_offloading:
+            self.denoiser.to("cpu")
 
         # 5. Decode the latents
-        self.vae.to(device)
-        image = self.decode_image(latents)
-        self.vae.to("cpu")
+        if do_offloading:
+            self.vae.to(device)
+        image = self.decode_image(latents.to(self.vae.device))
+        if do_offloading:
+            self.vae.to("cpu")
 
         return image
 

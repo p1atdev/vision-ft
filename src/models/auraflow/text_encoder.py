@@ -47,6 +47,7 @@ DEFAULT_TEXT_ENCODER_CONFIG_CLASS = UMT5Config
 TEXT_ENCODER_TENSOR_PREFIX = "text_encoders.pile_t5xl.transformer."
 DEFAULT_TOKENIZER_REPO = "fal/AuraFlow-v0.3"
 DEFAULT_TOKENIZER_FOLDER = "tokenizer"
+DEFAULT_MAX_TOKEN_LENGTH = 256
 
 PromptType: TypeAlias = str | list[str]
 
@@ -104,6 +105,7 @@ class TextEncoder(nn.Module):
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
         use_negative_prompts: bool = True,
+        max_token_length: int = DEFAULT_MAX_TOKEN_LENGTH,
     ):
         # 1. Normalize prompts
         _prompts, _negative_prompts = self.normalize_prompts(
@@ -111,12 +113,14 @@ class TextEncoder(nn.Module):
             negative_prompts,
             use_negative_prompts,
         )
+        prompts_len = len(_prompts)
 
         # 2. Tokenize prompts
         text_inputs = self.tokenizer(
             _prompts + _negative_prompts,
             return_tensors="pt",
-            padding=True,
+            max_length=max_token_length,
+            padding="max_length",
             truncation=True,
         )
 
@@ -137,11 +141,11 @@ class TextEncoder(nn.Module):
         prompt_encodings = prompt_encodings * attention_mask
 
         # 6. Split prompts and negative prompts
-        positive_embeddings = prompt_encodings[: len(_prompts)]
-        negative_embeddings = prompt_encodings[len(_prompts) :]
+        positive_embeddings = prompt_encodings[:prompts_len]
+        negative_embeddings = prompt_encodings[prompts_len:]
 
-        positive_attention_mask = attention_mask[: len(_prompts)]
-        negative_attention_mask = attention_mask[len(_prompts) :]
+        positive_attention_mask = attention_mask[:prompts_len]
+        negative_attention_mask = attention_mask[prompts_len:]
 
         return TextEncodingOutput(
             positive_embeddings=positive_embeddings,

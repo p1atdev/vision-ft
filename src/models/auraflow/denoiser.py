@@ -195,7 +195,7 @@ class SingleAttention(nn.Module):
             else Fp32LayerNorm(self.head_dim, bias=False, elementwise_affine=False)
         )
 
-    @torch.compile()
+    # @torch.compile()
     def forward(self, condition: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _dim = condition.shape
 
@@ -273,7 +273,7 @@ class DoubleAttention(nn.Module):
             else Fp32LayerNorm(self.head_dim, bias=False, elementwise_affine=False)
         )
 
-    @torch.compile()
+    # @torch.compile()
     def forward(
         self, condition: torch.Tensor, latent: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -314,7 +314,7 @@ class DoubleAttention(nn.Module):
             q,
             k,
             v,
-            scale=1 / self.head_dim**0.5,
+            # scale=1 / self.head_dim**0.5,
             use_flash=self.use_flash_attn,
         )
         # flatten the last two dimensions (head_dim, n_heads)
@@ -359,7 +359,7 @@ class MMDiTBlock(nn.Module):
 
         self.attn = DoubleAttention(dim, heads, use_flash_attn=use_flash_attn)
 
-    @torch.compile()
+    # @torch.compile()
     def forward(
         self,
         condition: torch.Tensor,
@@ -395,7 +395,7 @@ class MMDiTBlock(nn.Module):
         patches = modulate(self.normX1(patches), patches_shift_msa, patches_scale_msa)
 
         # 4. attention
-        condition, x = self.attn(condition, patches)
+        condition, patches = self.attn(condition, patches)
 
         # 5. condition residual and mlp
         condition = self.normC2(condition_res + cond_gate_msa.unsqueeze(1) * condition)
@@ -406,8 +406,8 @@ class MMDiTBlock(nn.Module):
 
         # 6. image patches residual and mlp
         patches = self.normX2(patches_res + patches_gate_msa.unsqueeze(1) * patches)
-        patches = patches_shift_mlp.unsqueeze(1) * self.mlpX(
-            modulate(patches, patches_scale_mlp, patches_gate_mlp)
+        patches = patches_gate_mlp.unsqueeze(1) * self.mlpX(
+            modulate(patches, patches_shift_mlp, patches_scale_mlp)
         )
         patches = patches_res + patches
 
@@ -436,7 +436,7 @@ class DiTBlock(nn.Module):
         self.attn = SingleAttention(dim, heads, use_flash_attn=use_flash_attn)
         self.mlp = AuraMLP(dim, hidden_dim=dim * 4)
 
-    @torch.compile()
+    # @torch.compile()
     def forward(
         self,
         context: torch.Tensor,  # text condition and image patches
@@ -481,14 +481,14 @@ class TimestepEmbedder(nn.Module):
         self.frequency_embedding_size = frequency_embedding_size
 
     @staticmethod
-    def timestep_embedding(timesteps: torch.Tensor, dim: int, max_period: int = 10000):
+    def timestep_embedding(timestep: torch.Tensor, dim: int, max_period: int = 10000):
         half = dim // 2
 
         frequencies = 1000 * torch.exp(
             -math.log(max_period) * torch.arange(start=0, end=half) / half
-        ).to(timesteps.device)
+        ).to(timestep.device)
 
-        args = timesteps[:, None] * frequencies[None]
+        args = timestep[:, None] * frequencies[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
 
         if dim % 2:
@@ -497,10 +497,11 @@ class TimestepEmbedder(nn.Module):
             )
         return embedding
 
-    @torch.compile()
-    def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
+    # @torch.compile()
+    def forward(self, timestep: torch.Tensor) -> torch.Tensor:
         time_freq = self.timestep_embedding(
-            timesteps, self.frequency_embedding_size
+            timestep,
+            self.frequency_embedding_size,
         ).to(dtype=next(self.parameters()).dtype)
         time_emb = self.mlp(time_freq)
         return time_emb
@@ -607,23 +608,15 @@ class MMDiT(nn.Module):
         # if cond_seq_linear
         nn.init.constant_(self.cond_seq_linear.weight, 0)
 
-    @torch.no_grad()
-    def extend_positional_encoding(self, init_dim=(16, 16), target_dim=(64, 64)):
-        # extend pe
-        pe_data = self.positional_encoding.data.squeeze(0)[: init_dim[0] * init_dim[1]]
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
-        pe_as_2d = pe_data.view(init_dim[0], init_dim[1], -1).permute(2, 0, 1)
+    @property
+    def dtype(self):
+        return next(self.parameters()).dtype
 
-        # now we need to extend this to target_dim. for this we will use interpolation.
-        # we will use torch.nn.functional.interpolate
-        pe_as_2d = F.interpolate(
-            pe_as_2d.unsqueeze(0), size=target_dim, mode="bilinear"
-        )
-        pe_new = pe_as_2d.squeeze(0).permute(1, 2, 0).flatten(0, 1)
-        self.positional_encoding.data = pe_new.unsqueeze(0).contiguous()
-        self.h_max, self.w_max = target_dim
-
-    # https://github.com/huggingface/diffusers/blob/825979ddc3d03462287f1f5439e89ccac8cc71e9/src/diffusers/models/transformers/auraflow_transformer_2d.py#L49
+    # https://github.com/huggingface/diffusers/blob/825979ddc3d03462287f1f5439e89ccac8cc71e9/src/diffusers/models/transformers/auraflow_transformer_2d.py#L71-L84
     def pe_selection_index_based_on_dim(self, h: int, w: int):
         # select subset of positional embedding based on H, W, where H, W is size of latent
         # PE will be viewed as 2d-grid, and H/p x W/p of the PE will be selected
@@ -635,11 +628,11 @@ class MMDiT(nn.Module):
             int(self.max_pos_embed_size**0.5),
         )
         original_pe_indexes = original_pe_indexes.view(h_max, w_max)
-        starth = h_max // 2 - h_p // 2
-        endh = starth + h_p
-        startw = w_max // 2 - w_p // 2
-        endw = startw + w_p
-        original_pe_indexes = original_pe_indexes[starth:endh, startw:endw]
+        start_h = h_max // 2 - h_p // 2
+        end_h = start_h + h_p
+        start_w = w_max // 2 - w_p // 2
+        end_w = start_w + w_p
+        original_pe_indexes = original_pe_indexes[start_h:end_h, start_w:end_w]
         return original_pe_indexes.flatten()
 
     def unpatchify(
@@ -669,10 +662,10 @@ class MMDiT(nn.Module):
         # From: [batch, h, w, patch_h, patch_w, channels]
         # To: [batch, channels, height*patch_h, width*patch_w]
         patches = torch.einsum("nhwpqc->nchpwq", patches)
-        images = patches.reshape(
+        output = patches.reshape(
             batch_size, out_channels, height * patch_size, width * patch_size
         )
-        return images
+        return output
 
     def patchify(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -707,7 +700,7 @@ class MMDiT(nn.Module):
         self,
         latent: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
-        timesteps: torch.Tensor,
+        timestep: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
         batch_size, _in_channels, height, width = latent.shape
@@ -725,8 +718,8 @@ class MMDiT(nn.Module):
         cond_tokens = torch.cat(
             [self.register_tokens.repeat(cond_tokens.size(0), 1, 1), cond_tokens], dim=1
         )
-        timesteps = timesteps[:batch_size]
-        global_cond = self.t_embedder(timesteps)
+        timestep = timestep[:batch_size]
+        global_cond = self.t_embedder(timestep)
 
         # 3. double layers
         if len(self.double_layers) > 0:
@@ -737,12 +730,13 @@ class MMDiT(nn.Module):
 
         # 4. single layers
         if len(self.single_layers) > 0:
-            c_len = cond_tokens.size(1)
-            cx = torch.cat([cond_tokens, patches], dim=1)
+            cond_tokens_len = cond_tokens.size(1)
+            context = torch.cat([cond_tokens, patches], dim=1)
             for layer in self.single_layers:
-                cx = layer(cx, global_cond, **kwargs)
+                context = layer(context, global_cond, **kwargs)
 
-            patches = cx[:, c_len:]
+            # take only patches
+            patches = context[:, cond_tokens_len:]
 
         # 5. modulate
         f_shift, f_scale = self.modF(global_cond).chunk(2, dim=1)
@@ -758,7 +752,6 @@ class MMDiT(nn.Module):
 
 class Denoiser(
     MMDiT,
-    nn.Module,
 ):
     def __init__(self, config: DenoiserConfig) -> None:
         super().__init__(

@@ -18,7 +18,7 @@ class DenoiserConfig(BaseModel):
     pos_embed_max_size: int = 96 * 96  # 9216
     num_register_tokens: int = 8
     hidden_act: str = "silu"
-    use_flash_attn: bool = False
+    use_flash_attn: bool = True
 
 
 class AuraFlowConig(BaseModel):
