@@ -68,6 +68,7 @@ def scaled_qkv_attention(
     v: torch.Tensor,
     scale: float | None = None,
     use_flash: bool = False,
+    attention_dtype: torch.dtype = torch.bfloat16,  # float16 or bfloat16
 ) -> torch.Tensor:
     """Computes scaled dot-product attention between query, key and value tensors.
 
@@ -92,6 +93,12 @@ def scaled_qkv_attention(
         q.dim() == k.dim() == v.dim() == 4
     )  # must be (batch_size, seq_len, num_heads, head_dim)
 
+    if q.dtype == torch.float32:
+        q, k, v = (
+            q.to(attention_dtype),
+            k.to(attention_dtype),
+            v.to(attention_dtype),
+        )
     if use_flash:
         output = flash_attn_func(
             q,
@@ -502,7 +509,7 @@ class TimestepEmbedder(nn.Module):
         time_freq = self.timestep_embedding(
             timestep,
             self.frequency_embedding_size,
-        ).to(dtype=next(self.parameters()).dtype)
+        )
         time_emb = self.mlp(time_freq)
         return time_emb
 

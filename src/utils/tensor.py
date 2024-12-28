@@ -64,3 +64,13 @@ def tensor_to_images(
     image_array = tensor.cpu().float().numpy().astype(np.uint8)
 
     return [Image.fromarray(image) for image in image_array]
+
+
+def is_target_key(name: str, include_keys: list[str], exclude_keys: list[str]) -> bool:
+    """
+    Check if the key is the target key
+    """
+
+    return any(key in name for key in include_keys) and not any(
+        key in name for key in exclude_keys
+    )
