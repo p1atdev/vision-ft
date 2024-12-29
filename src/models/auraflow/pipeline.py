@@ -1,5 +1,6 @@
 from tqdm import tqdm
 from PIL import Image
+import warnings
 
 import torch
 from torch._tensor import Tensor
@@ -23,9 +24,26 @@ from .text_encoder import (
     DEFAULT_TOKENIZER_FOLDER,
     TEXT_ENCODER_TENSOR_PREFIX,
 )
-from .vae import VAE, DEFAULT_VAE_CONFIG
+from .vae import VAE, VAE_TENSOR_PREFIX, DEFAULT_VAE_CONFIG, detect_vae_type
 from .scheduler import Scheduler
 from ...utils import tensor as tensor_utils
+from ...modules.quant import replace_by_prequantized_weights
+
+AURAFLOW_V03_REPO = "fal/AuraFlow-v0.3"
+
+
+def convert_to_original_key(key: str) -> str:
+    key = key.replace("denoiser.", DENOISER_TENSOR_PREFIX)
+    key = key.replace("vae.", VAE_TENSOR_PREFIX)
+    key = key.replace("text_encoder.model.", TEXT_ENCODER_TENSOR_PREFIX)
+    return key
+
+
+def convert_from_original_key(key: str) -> str:
+    key = key.replace(DENOISER_TENSOR_PREFIX, "denoiser.")
+    key = key.replace(VAE_TENSOR_PREFIX, "vae.")
+    key = key.replace(TEXT_ENCODER_TENSOR_PREFIX, "text_encoder.model.")
+    return key
 
 
 class AuraFlowModel(nn.Module):
@@ -55,28 +73,49 @@ class AuraFlowModel(nn.Module):
 
     def _load_original_weights(
         self,
-        torch_dtype: torch.dtype = torch.bfloat16,
     ):
         config = self.config
         state_dict = load_file(config.checkpoint_path)
+        state_dict = {
+            convert_from_original_key(key): value for key, value in state_dict.items()
+        }
+
+        # prepare for prequantized weights
+        replace_by_prequantized_weights(self, state_dict)
+
         self.denoiser.load_state_dict(
             {
-                key[len(DENOISER_TENSOR_PREFIX) :]: value.to(torch_dtype)
+                key[len("denoiser.") :]: value
                 for key, value in state_dict.items()
-                if key.startswith(DENOISER_TENSOR_PREFIX)
+                if key.startswith("denoiser.")
             },
             assign=True,
         )
-        self.vae = VAE.from_pretrained(
-            config.pretrained_model_name_or_path,
-            subfolder=config.vae_folder,
-            torch_dtype=torch_dtype,
-        )
-        self.text_encoder.model.load_state_dict(
+        vae_type = detect_vae_type(state_dict)
+        if vae_type == "original":
+            warnings.warn(
+                "Original VAE weights are not supported. Using the default VAE weights."
+            )
+            self.vae = VAE.from_pretrained(
+                AURAFLOW_V03_REPO,
+                subfolder=config.vae_folder,
+                variant="fp16",
+                torch_dtype=torch.bfloat16,
+            )
+        elif vae_type == "autoencoder_kl":
+            self.vae.load_state_dict(  # type: ignore
+                {
+                    key[len("vae.") :]: value
+                    for key, value in state_dict.items()
+                    if key.startswith("vae.")
+                },
+                assign=True,
+            )
+        self.text_encoder.load_state_dict(
             {
-                key[len(TEXT_ENCODER_TENSOR_PREFIX) :]: value.to(torch_dtype)
+                key[len("text_encoder.") :]: value
                 for key, value in state_dict.items()
-                if key.startswith(TEXT_ENCODER_TENSOR_PREFIX)
+                if key.startswith("text_encoder.")
             },
             assign=True,
         )
@@ -85,14 +124,39 @@ class AuraFlowModel(nn.Module):
     def from_original_checkpoint(
         cls,
         config: AuraFlowConig,
-        torch_dtype: torch.dtype = torch.bfloat16,
+        # torch_dtype: torch.dtype = torch.bfloat16,
     ) -> "AuraFlowModel":
         with init_empty_weights():
             model = cls.from_config(config)
 
-        model._load_original_weights(torch_dtype)
+        model._load_original_weights()
 
         return model
+
+    # replace the prefix to match the original checkpoint
+    def state_dict(
+        self,
+        destination: dict[str, Tensor] | None = None,
+        prefix: str = "",
+        keep_vars: bool = False,
+    ) -> dict[str, Tensor]:
+        state_dict: dict[str, torch.Tensor] = super().state_dict(
+            destination=destination,
+            prefix=prefix,
+            keep_vars=keep_vars,
+        )
+        # shared.weight is referenced by its encoder,
+        # and removed when saving with safetensors' save_model().
+        # We need to de-reference it here.
+        state_dict["text_encoder.model.shared.weight"] = state_dict[
+            "text_encoder.model.shared.weight"
+        ].clone()
+
+        state_dict = {
+            convert_to_original_key(key): value for key, value in state_dict.items()
+        }
+
+        return state_dict
 
     def prepare_latents(
         self,

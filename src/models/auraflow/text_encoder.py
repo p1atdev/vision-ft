@@ -77,6 +77,32 @@ class TextEncoder(nn.Module):
 
         return cls(model, tokenizer)
 
+    def _load_from_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: dict,
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ):
+        # sometimes "shared.weight" is missing from the state_dict
+        shared_weight_key = "model.shared.weight"
+        if shared_weight_key not in state_dict:
+            reference_key = "model.encoder.embed_tokens.weight"
+            state_dict[shared_weight_key] = state_dict[reference_key]
+
+        return super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
     def normalize_prompts(
         self,
         prompts: PromptType,

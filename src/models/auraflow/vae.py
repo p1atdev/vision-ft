@@ -39,6 +39,16 @@ AURA_VAE_COMPRESSION_RATIO = 8  # same as SDXL's VAE
 AURA_VAE_SCALING_FACTOR = 0.13025  # same as SDXL's VAE
 
 
-class VAE(AutoencoderKL, nn.Module):
+class VAE(AutoencoderKL):
     compression_ratio = AURA_VAE_COMPRESSION_RATIO
     scaling_factor = AURA_VAE_SCALING_FACTOR
+
+
+def detect_vae_type(state_dict: dict[str, torch.Tensor]):
+    if "vae.encoder.norm_out.weight" in state_dict:
+        return "original"
+
+    if "vae.encoder.conv_norm_out.weight" in state_dict:
+        return "autoencoder_kl"
+
+    raise ValueError("Unknown VAE type")
