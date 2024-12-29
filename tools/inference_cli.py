@@ -6,7 +6,11 @@ from accelerate import Accelerator, init_empty_weights
 from accelerate.utils import broadcast_object_list
 
 from src.models.auraflow import AuraFlowConig, AuraFlowModel
-from src.utils.quantize import replace_quantized_linear, QUANT_TYPE
+from src.utils.quantize import (
+    replace_quantized_linear,
+    QUANT_TYPE,
+    quantize_after_weight_init,
+)
 
 torch.set_float32_matmul_precision("high")
 
@@ -27,11 +31,14 @@ def main(
 
     config = AuraFlowConig(checkpoint_path=checkpoint_path)
 
+    print("Loading model...")
+
     with accelerator.main_process_first():
         with init_empty_weights():
             model = AuraFlowModel(config)
 
-            if quant_type is not None:
+            if quant_type is not None and not quant_type.startswith("quanto_"):
+                print(f"Quantizing model with {quant_type}...")
                 model = replace_quantized_linear(
                     model,
                     quant_type,
@@ -40,6 +47,15 @@ def main(
                 )
 
         model._load_original_weights()
+        if quant_type is not None and quant_type.startswith("quanto_"):
+            print(f"Quantizing model with {quant_type}...")
+            quantize_after_weight_init(
+                model,
+                quant_type,
+                include_keys=["denoiser"],
+                exclude_keys=["t_embedder", "final_linear", "modF"],
+            )
+
         model = torch.compile(
             model,
         )
