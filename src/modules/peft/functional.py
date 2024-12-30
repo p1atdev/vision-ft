@@ -37,6 +37,9 @@ def _replace_to_peft_linear(
     for name, layer in model.named_children():
         full_name = f"{prefix}{name}"
 
+        # disable grad for all layers
+        layer.requires_grad_(False)
+
         if isinstance(layer, nn.Linear):
             if not is_target_key(full_name, config.include_keys, config.exclude_keys):
                 continue
@@ -63,3 +66,15 @@ def replace_to_peft_linear(
         config,
         dtype=dtype,
     )
+
+
+def get_adapter_parameters(model: nn.Module) -> dict[str, torch.Tensor]:
+    adapter_params = {}
+
+    for name, module in model.named_modules():
+        if (param_names := getattr(module, "adapter_param_names", None)) is not None:
+            for state_key, state_value in module.state_dict().items():
+                if any(state_key.startswith(name) for name in param_names):
+                    adapter_params[f"{name}.{state_key}"] = state_value
+
+    return adapter_params

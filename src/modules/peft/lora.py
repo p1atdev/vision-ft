@@ -5,6 +5,8 @@ from .config import LoRAConfig
 
 
 class LoRALinear(nn.Module):
+    adapter_param_names = ["lora_up", "lora_down", "alpha"]
+
     def __init__(
         self,
         config: LoRAConfig,
@@ -44,10 +46,6 @@ class LoRALinear(nn.Module):
         # following: https://github.com/pytorch/torchtune/blob/aa8f365f91a69aa36aaea14cf6f03ccd45310bb6/torchtune/modules/peft/lora.py#L102-L106
         nn.init.kaiming_uniform_(self.lora_down.weight)
         nn.init.zeros_(self.lora_up.weight)
-
-    @property
-    def adapter_param_names(self) -> list[str]:
-        return ["lora_up.weight", "lora_down.weight", "alpha"]
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled

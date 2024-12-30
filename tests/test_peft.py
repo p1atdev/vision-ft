@@ -1,7 +1,12 @@
 import torch
 import torch.nn as nn
 
-from src.modules.peft import replace_to_peft_linear, LoRAConfig, LoRALinear
+from src.modules.peft import (
+    replace_to_peft_linear,
+    LoRAConfig,
+    LoRALinear,
+    get_adapter_parameters,
+)
 
 
 @torch.no_grad()
@@ -10,7 +15,7 @@ def test_replace_lora_linear():
         def __init__(self):
             super().__init__()
             self.layer1 = nn.Sequential(
-                nn.Linear(10, 10),
+                nn.Linear(10, 10),  # <- target
                 nn.ReLU(),
                 nn.Linear(10, 10),
             )
@@ -19,9 +24,17 @@ def test_replace_lora_linear():
                 nn.ReLU(),
                 nn.Linear(10, 10),
             )
+            self.layer3 = nn.ModuleList(
+                [
+                    nn.Linear(10, 10),  # <- target
+                ]
+            )
 
         def forward(self, x):
-            return self.layer2(self.layer1(x))
+            out = self.layer1(x)
+            out = self.layer2(out)
+            out = self.layer3[0](out)
+            return out
 
     model = TestModel().to(torch.float16)
 
@@ -48,8 +61,31 @@ def test_replace_lora_linear():
     assert isinstance(model.layer1[2], nn.Linear)
     assert isinstance(model.layer2[0], nn.Linear)
     assert isinstance(model.layer2[2], nn.Linear)
+    assert isinstance(model.layer3[0], LoRALinear)
 
     lora_output = model(inputs)
 
     # must be equal because initial LoRA output is zero
     assert torch.equal(original_output, lora_output)
+
+    # lora module must be trainable
+    for name, param in model.named_parameters():
+        if "lora_" in name:
+            assert param.requires_grad is True
+        else:
+            assert param.requires_grad is False
+
+    adapter_params = get_adapter_parameters(model)
+    assert (
+        len(adapter_params) == 6
+    )  # layer1.0.lora_up.weight, layer1.0.lora_down.weight, layer1.0.alpha
+    assert sorted(adapter_params.keys()) == sorted(
+        [
+            "layer1.0.lora_down.weight",
+            "layer1.0.lora_up.weight",
+            "layer1.0.alpha",
+            "layer3.0.lora_down.weight",
+            "layer3.0.lora_up.weight",
+            "layer3.0.alpha",
+        ]
+    )
