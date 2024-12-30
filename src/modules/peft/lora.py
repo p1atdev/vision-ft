@@ -1,28 +1,26 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .config import LoRAConfig
 
 
-class LoRALinear(nn.Linear):
+class LoRALinear(nn.Module):
     def __init__(
         self,
         config: LoRAConfig,
+        original_linear: nn.Linear,
         in_features: int,
         out_features: int,
-        bias: bool = True,
         dropout: float = 0.0,
-        device=None,
-        dtype=None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(in_features, out_features, bias, device, dtype)
+        super().__init__()
 
         self.config = config
 
         # lora modules
-        self.lora_down = nn.Linear(in_features, config.rank, bias=False)
-        self.lora_up = nn.Linear(config.rank, out_features, bias=False)
+        self.lora_down = nn.Linear(in_features, config.rank, bias=False, dtype=dtype)
+        self.lora_up = nn.Linear(config.rank, out_features, bias=False, dtype=dtype)
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.alpha = nn.Parameter(torch.tensor(config.alpha))
         self.rank = config.rank
@@ -30,13 +28,15 @@ class LoRALinear(nn.Linear):
         # enable/disable LoRA
         self.enabled = True
 
-        # freeze original weights
-        self.weight.requires_grad = False
-        if self.bias is not None:
-            self.bias.requires_grad = False
+        # original linear
+        self.linear = original_linear
+        # freeze original linear
+        self.linear.weight.requires_grad_(False)
+        if self.linear.bias is not None:
+            self.linear.bias.requires_grad_(False)
 
         # freeze LoRA alpha
-        self.alpha.requires_grad = False
+        self.alpha.requires_grad_(False)
 
         self.init_weights()
 
@@ -53,7 +53,7 @@ class LoRALinear(nn.Linear):
         self.enabled = enabled
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        original_output = F.linear(x, self.weight, self.bias)
+        original_output = self.linear(x)
 
         # if disabled, return original output
         if not self.enabled:

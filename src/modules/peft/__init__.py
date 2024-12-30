@@ -1,3 +1,3 @@
-from .config import LoRAConfig, QLoRAConfig
+from .config import LoRAConfig
 from .lora import LoRALinear
-from .qlora import QLoRALinear
+from .functional import replace_to_peft_linear
