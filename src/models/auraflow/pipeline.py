@@ -251,6 +251,7 @@ class AuraFlowModel(nn.Module):
         )
         if do_offloading:
             self.text_encoder.to("cpu")
+            torch.cuda.empty_cache()
 
         # 3. Prepare latents.
         latents = self.prepare_latents(
@@ -317,6 +318,7 @@ class AuraFlowModel(nn.Module):
                     progress_bar.update()
         if do_offloading:
             self.denoiser.to("cpu")
+            torch.cuda.empty_cache()
 
         # 5. Decode the latents
         if do_offloading:
@@ -324,5 +326,6 @@ class AuraFlowModel(nn.Module):
         image = self.decode_image(latents.to(self.vae.device))
         if do_offloading:
             self.vae.to("cpu")
+            torch.cuda.empty_cache()
 
         return image
