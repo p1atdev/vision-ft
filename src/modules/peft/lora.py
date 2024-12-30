@@ -24,7 +24,7 @@ class LoRALinear(nn.Module):
         self.lora_down = nn.Linear(in_features, config.rank, bias=False, dtype=dtype)
         self.lora_up = nn.Linear(config.rank, out_features, bias=False, dtype=dtype)
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        self.alpha = nn.Parameter(torch.tensor(config.alpha))
+        self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
         self.rank = config.rank
 
         # enable/disable LoRA

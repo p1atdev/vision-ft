@@ -1,12 +1,16 @@
 import torch
 import torch.nn as nn
 
+from accelerate import init_empty_weights
+from safetensors.torch import save_file
+
 from src.modules.peft import (
     replace_to_peft_linear,
     LoRAConfig,
     LoRALinear,
     get_adapter_parameters,
 )
+from src.models.auraflow import AuraFlowConig, AuraFlowModel
 
 
 @torch.no_grad()
@@ -89,3 +93,37 @@ def test_replace_lora_linear():
             "layer3.0.alpha",
         ]
     )
+
+
+def test_save_lora_weight():
+    with init_empty_weights():
+        model = AuraFlowModel(AuraFlowConig(checkpoint_path="meta"))
+
+    config = LoRAConfig(
+        peft_type="lora",
+        rank=4,
+        alpha=1.0,
+        dropout=0.0,
+        use_bias=False,
+        include_keys=[
+            ".attn.",
+            ".mlp.",
+            ".modC.",
+            ".modC.",
+            ".modX.",
+        ],  # Attention and FeedForward, AdaLayerNorm
+        exclude_keys=[
+            "text_encoder",
+            "vae",
+            "t_embedder",
+            "final_linear",
+        ],  # exclude text encoder, vae, time embedder, final linear
+    )
+
+    replace_to_peft_linear(
+        model,
+        config,
+        dtype=torch.float16,
+    )
+
+    save_file(get_adapter_parameters(model), "output/lora_empty.safetensors")
