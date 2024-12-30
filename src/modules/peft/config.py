@@ -8,6 +8,8 @@ PEFT_TYPE = Literal["lora", "none"]
 class PeftConfigMixin(BaseModel):
     peft_type: PEFT_TYPE
 
+    dtype: str = "bfloat16"
+
     include_keys: list[str] = []
     exclude_keys: list[str] = []
 

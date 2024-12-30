@@ -4,6 +4,7 @@ from torch import nn
 from .config import PeftConfigMixin, PEFT_TYPE, LoRAConfig
 from .lora import LoRALinear
 from ...utils.tensor import is_target_key
+from ...utils.dtype import str_to_dtype
 
 
 def _get_peft_linear(
@@ -32,7 +33,6 @@ def _replace_to_peft_linear(
     model: nn.Module,
     config: PeftConfigMixin,
     prefix: str = "",
-    dtype: torch.dtype | None = None,
 ) -> None:
     for name, layer in model.named_children():
         full_name = f"{prefix}{name}"
@@ -45,26 +45,25 @@ def _replace_to_peft_linear(
                 continue
 
             # replace with peft module
-            peft_module = _get_peft_linear(layer, config, dtype=dtype)
+            peft_module = _get_peft_linear(
+                layer, config, dtype=str_to_dtype(config.dtype)
+            )
             setattr(model, name, peft_module)
         else:
             _replace_to_peft_linear(
                 layer,
                 config,
                 f"{full_name}.",
-                dtype=dtype,
             )
 
 
 def replace_to_peft_linear(
     model: nn.Module,
     config: PeftConfigMixin,
-    dtype: torch.dtype | None = None,
 ) -> None:
     _replace_to_peft_linear(
         model,
         config,
-        dtype=dtype,
     )
 
 

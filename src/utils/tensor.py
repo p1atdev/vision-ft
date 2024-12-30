@@ -32,6 +32,19 @@ def incremental_seed_randn(
     return torch.randn(shape, dtype=dtype, device=device)
 
 
+def image_to_tensor(
+    image: Image.Image,
+    dtype: torch.dtype = torch.float32,
+    device: torch.device = torch.device("cpu"),
+) -> torch.Tensor:
+    # 0~255 -> -1~1
+    return (
+        torch.tensor(np.array(image), dtype=dtype, device=device).permute(2, 0, 1)
+        / 127.5
+        - 1.0
+    )
+
+
 def images_to_tensor(
     images: list[Image.Image],
     dtype: torch.dtype,

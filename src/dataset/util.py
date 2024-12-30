@@ -10,5 +10,5 @@ class DatasetConfig(BaseModel, ABC):
     num_workers: int = 8
 
     @abstractmethod
-    def get_dataset(self) -> tuple[data.Dataset, data.Dataset]:
+    def get_dataset(self) -> data.Dataset:
         pass

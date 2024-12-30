@@ -105,6 +105,7 @@ def test_save_lora_weight():
         alpha=1.0,
         dropout=0.0,
         use_bias=False,
+        dtype="bfloat16",
         include_keys=[
             ".attn.",
             ".mlp.",
@@ -123,7 +124,6 @@ def test_save_lora_weight():
     replace_to_peft_linear(
         model,
         config,
-        dtype=torch.float16,
     )
 
     save_file(get_adapter_parameters(model), "output/lora_empty.safetensors")

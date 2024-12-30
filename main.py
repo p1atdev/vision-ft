@@ -1,29 +1,23 @@
-import argparse
+import click
 
-from src.models.mnist import MnistModelForTraining
-from src.trainer import Trainer
+from src.models.auraflow import AuraFlowForTraining
+from src.trainer.t2i import Trainer
 from src.config import TrainConfig
-from src.dataset.mnist import MnistDatasetConfig
+from src.dataset.t2i import T2IDatasetConfig
 
 
-def prepare_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--debug", action="store_true")
-    return parser.parse_args()
-
-
-def main():
-    args = prepare_args()
-
-    config = TrainConfig.from_config_file(args.config)
+@click.command()
+@click.option("--config", type=str, required=True)
+@click.option("--debug", is_flag=True)
+def main(config: str, debug: bool):
+    _config = TrainConfig.from_config_file(config)
 
     trainer = Trainer(
-        config,
-        only_sanity_check=args.debug,
+        _config,
+        only_sanity_check=debug,
     )
-    trainer.register_dataset_class(MnistDatasetConfig)
-    trainer.register_model_class(MnistModelForTraining)
+    trainer.register_dataset_class(T2IDatasetConfig)
+    trainer.register_model_class(AuraFlowForTraining)
 
     trainer.train()
 

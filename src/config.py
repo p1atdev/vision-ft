@@ -10,6 +10,7 @@ from .saving import (
     SafetensorsSavingCallbackConfig,
     ModelSavingStrategyConfig,
 )
+from .modules.peft import PeftConfigMixin
 
 
 class OptimizerConfig(BaseModel):
@@ -39,6 +40,8 @@ class TrackerConfig(BaseModel):
 class TrainConfig(BaseModel):
     model: dict | BaseModel
     dataset: dict | BaseModel
+    peft: PeftConfigMixin | None = None
+
     optimizer: OptimizerConfig = OptimizerConfig()
     scheduler: SchedulerConfig | None = None
     saving: SavingConfig | None = SavingConfig()
