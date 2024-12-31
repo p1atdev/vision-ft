@@ -1,7 +1,17 @@
 import torch
 import torch.nn as nn
 
-from .config import LoRAConfig
+from typing import Literal
+
+from .config import PeftConfigMixin
+
+
+class LoRAConfig(PeftConfigMixin):
+    type: Literal["lora"] = "lora"
+    rank: int = 4
+    alpha: float = 1.0
+    dropout: float = 0.0
+    use_bias: bool = False
 
 
 class LoRALinear(nn.Module):

@@ -43,7 +43,8 @@ def test_replace_lora_linear():
     model = TestModel().to(torch.float16)
 
     config = LoRAConfig(
-        peft_type="lora",
+        type="lora",
+        dtype="float16",
         rank=4,
         alpha=1.0,
         dropout=0.0,
@@ -58,7 +59,6 @@ def test_replace_lora_linear():
     replace_to_peft_linear(
         model,
         config,
-        dtype=torch.float16,
     )
 
     assert isinstance(model.layer1[0], LoRALinear)
@@ -100,7 +100,7 @@ def test_save_lora_weight():
         model = AuraFlowModel(AuraFlowConig(checkpoint_path="meta"))
 
     config = LoRAConfig(
-        peft_type="lora",
+        type="lora",
         rank=4,
         alpha=1.0,
         dropout=0.0,
