@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics.functional as metrics
 
-from ..trainer.t2i import ModelForTraining
+from ..trainer.common import ModelForTraining
 
 
 class MnistConfig(BaseModel):

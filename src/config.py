@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Union
 
 import yaml
 from pathlib import Path
@@ -37,15 +37,30 @@ class TrackerConfig(BaseModel):
     args: dict = {}
 
 
+DEBUG_MODE_TYPE = Literal[
+    False,  # not debug mode
+    "sanity_check",  # check model sanity
+    "1step",  # pass only 1 step
+    "dataset",  # check dataset
+]
+
+
+class TrainerConfig(BaseModel):
+    debug_mode: DEBUG_MODE_TYPE = False
+
+
 class TrainConfig(BaseModel):
     model: dict | BaseModel
     dataset: dict | BaseModel
+    # TODO: loss config
+    # loss: dict | BaseModel
     peft: PeftConfigMixin | None = None
 
     optimizer: OptimizerConfig = OptimizerConfig()
     scheduler: SchedulerConfig | None = None
     saving: SavingConfig | None = SavingConfig()
     trackers: list[TrackerConfig] | None = []
+    trainer: TrainerConfig | None = None
 
     seed: int = 42
 
@@ -57,7 +72,7 @@ class TrainConfig(BaseModel):
     def to_dict(self) -> dict:
         return self.model_dump()
 
-    def save_to(self, dir: Path | str, filename: str = "config.yaml"):
+    def ve_to(self, dir: Path | str, filename: str = "config.yaml"):
         if isinstance(dir, str):
             dir = Path(dir)
 
@@ -70,4 +85,4 @@ class TrainConfig(BaseModel):
         with open(path, "r") as f:
             config = yaml.safe_load(f)
 
-        return TrainConfig.model_validate(config)
+        return TrainConfig.model_validate(config, strict=True)

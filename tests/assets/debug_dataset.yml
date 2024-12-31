@@ -1,0 +1,46 @@
+model:
+  checkpoint_path: "./models/aura_flow_0.3.bnb_nf4.safetensors"
+  pretrained_model_name_or_path: fal/AuraFlow-v0.3
+
+  dtype: bfloat16
+
+peft:
+  type: none
+
+dataset:
+  folder: "data/images"
+  num_repeats: 4
+
+optimizer:
+  name: "torch.optim.AdamW"
+  args:
+    lr: 0.001
+
+scheduler:
+  name: "torch.optim.lr_scheduler.ConstantLR"
+  args: {}
+
+trackers:
+  - name: wandb
+    args:
+      project: "hogehoge-1"
+
+saving:
+  strategy:
+    per_epochs: 5
+    per_steps: 200
+    save_last: true
+
+  callbacks:
+    - type: "safentensors"
+      name: "hoge"
+      save_dir: "./output/hoge"
+
+seed: 42
+num_train_epochs: 10
+
+trainer:
+  debug_mode: "dataset"
+
+torch_compile: true
+fp32_matmul_precision: "high"

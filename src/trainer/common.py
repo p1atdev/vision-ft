@@ -8,14 +8,17 @@ import torch.utils.data as data
 from accelerate import Accelerator
 from transformers import set_seed
 
-from ..config import TrainConfig
+from ..config import TrainConfig, DEBUG_MODE_TYPE
 from ..saving import ModelSavingStrategy, get_saving_callback
 from ..dataset.util import DatasetConfig
-from ..dataset.bucket import bucketing_collate_fn
-from ..dataloader import get_dataloader
+from ..dataloader import get_dataloader_for_bucketing
 from ..utils.logging import get_trackers
 from ..models.for_training import ModelForTraining
-from ..modules.peft import PeftConfigMixin, replace_to_peft_linear
+from ..modules.peft import (
+    PeftConfigMixin,
+    replace_to_peft_linear,
+    print_trainable_parameters,
+)
 
 
 class Trainer:
@@ -27,23 +30,24 @@ class Trainer:
     dataset_config_class: type[DatasetConfig]
 
     train_dataloader: data.DataLoader
-    eval_dataloader: data.DataLoader | None
+    eval_dataloader: data.DataLoader | None = None
+
+    debug_mode: DEBUG_MODE_TYPE
 
     def __init__(
         self,
         config: TrainConfig,
         seed: int = 42,
-        only_sanity_check: bool = False,
     ) -> None:
         self.config = config
         self.peft_config = config.peft
 
         self.seed = seed
-        self.only_sanity_check = only_sanity_check
+        self.debug_mode = False if config.trainer is None else config.trainer.debug_mode
 
         self.accelerator = Accelerator(
             log_with=get_trackers(config.trackers)
-            if not only_sanity_check and config.trackers is not None
+            if (self.debug_mode is not False) and (config.trackers is not None)
             else [],
         )
 
@@ -69,12 +73,10 @@ class Trainer:
     def prepare_dataloaders(self):
         train_ds = self.dataset_config.get_dataset()
 
-        train_dataloader = get_dataloader(
+        train_dataloader = get_dataloader_for_bucketing(
             train_ds,
-            batch_size=1,
             shuffle=self.dataset_config.shuffle,
             num_workers=self.dataset_config.num_workers,
-            collate_fn=bucketing_collate_fn,
         )
         # TODO: eval, generation check
         # eval_dataloader = get_dataloader(
@@ -104,12 +106,17 @@ class Trainer:
 
     def setup_peft_if_needed(self):
         if self.peft_config is not None:
+            self.print("Applying PEFT")
             replace_to_peft_linear(
                 self.model,
                 self.peft_config,
             )
+            print_trainable_parameters(self.model, self.print)
 
     def before_train(self):
+        if self.debug_mode is not False:
+            self.print(f"Debug mode is enabled: {self.debug_mode}")
+
         self.print("before_train()")
         self.print(f"Seed: {self.seed}")
         set_seed(self.seed)
@@ -119,6 +126,11 @@ class Trainer:
 
         self.print("Setting up saving strategy")
         self.prepare_saving_strategy()
+
+        if self.debug_mode == "dataset":
+            self.debug_dataset()
+            self.print("Dataset check done. Exiting...")
+            return
 
         self.print("Setting up model")
         self.model.before_setup_model()
@@ -156,7 +168,7 @@ class Trainer:
 
                 self.call_saving_callbacks(epoch, current_step)
 
-                if self.only_sanity_check:
+                if self.debug_mode == "1step":
                     break
 
             self.model.after_train_epoch()
@@ -172,12 +184,12 @@ class Trainer:
 
                     self.model.after_eval_step()
 
-                    if self.only_sanity_check:
+                    if self.debug_mode == "1step":
                         break
 
                 self.model.after_eval_epoch()
 
-            if self.only_sanity_check:
+            if self.debug_mode == "1step":
                 break
 
     def call_saving_callbacks(self, epoch: int, steps: int):
@@ -189,10 +201,29 @@ class Trainer:
 
             self.model.after_save_model()
 
+    def debug_dataset(self):
+        if self.train_dataloader is None:
+            raise ValueError("train_dataloader is not prepared")
+
+        self.print("debugging train_dataloader...")
+        for batch in self.train_dataloader:
+            self.print(batch)
+
+        if self.eval_dataloader is not None:
+            self.print("debugging eval_dataloader...")
+            for batch in self.eval_dataloader:
+                self.print(batch)
+
+    # User-facing method
     def train(self):
         self.before_train()
+        if self.debug_mode == "dataset":
+            return
 
         self.model.sanity_check()
+        if self.debug_mode == "sanity_check":
+            self.print("Sanity check done. Exiting...")
+            return
 
         self.training_loop()
 
@@ -202,7 +233,7 @@ class Trainer:
         self.accelerator.print(*args, **kwargs)
 
     def log(self, *args, **kwargs):
-        if self.only_sanity_check:
+        if self.debug_mode is False:
             return
 
         self.accelerator.log(*args, **kwargs)
