@@ -191,14 +191,17 @@ class AuraFlowModel(nn.Module):
     @torch.no_grad()
     def encode_image(
         self,
-        image: Image.Image | list[Image.Image],
+        image: Image.Image | list[Image.Image] | torch.Tensor,
     ) -> torch.Tensor:
-        _images = image if isinstance(image, list) else [image]
+        if not isinstance(image, torch.Tensor):
+            image_list = image if isinstance(image, list) else [image]
 
-        _images = tensor_utils.images_to_tensor(
-            _images, self.vae.dtype, self.vae.device
-        )
-        encode_output = self.vae.encode(_images)
+            image_tensor = tensor_utils.images_to_tensor(
+                image_list, self.vae.dtype, self.vae.device
+            )
+        else:
+            image_tensor = image
+        encode_output = self.vae.encode(image_tensor.to(self.vae.dtype))
         latents = encode_output[0].sample() * self.vae.scaling_factor
 
         return latents

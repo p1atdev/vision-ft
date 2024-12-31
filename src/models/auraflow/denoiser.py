@@ -782,3 +782,6 @@ class Denoiser(
     @classmethod
     def from_config(cls, config: DenoiserConfig) -> "Denoiser":
         return cls(config)
+
+    def __call__(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)

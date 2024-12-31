@@ -1,4 +1,5 @@
 from typing import Callable
+import warnings
 
 import torch
 from torch import nn
@@ -17,7 +18,8 @@ def _get_peft_linear(
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
 
-    if isinstance(config, LoRAConfig):
+    if config.type == "lora":
+        config = LoRAConfig.model_validate(config.model_dump())
         return LoRALinear(
             config=config,
             original_linear=module,
@@ -100,11 +102,33 @@ def calculate_trainable_parameters(
     }
 
 
+def human_readable_param(
+    param_size: int,
+) -> str:
+    # kilo, million, billion, trillion
+    units = [
+        ("T", 10**12),
+        ("B", 10**9),
+        ("M", 10**6),
+        ("K", 10**3),
+    ]
+    for unit, value in units:
+        if param_size >= value:
+            return f"{param_size / value:.2f}{unit}"
+
+    return f"{param_size}"
+
+
 def print_trainable_parameters(
     model: nn.Module,
     print_fn: Callable = print,
 ):
     trainable_params = calculate_trainable_parameters(model)
+    human_readable_trainable_params = human_readable_param(
+        trainable_params["trainable_params"]
+    )
+    human_readable_all_param = human_readable_param(trainable_params["all_param"])
+
     print_fn(
-        f"Trainable params: {trainable_params['trainable_params']}, All params: {trainable_params['all_param']}, Trainable%: {trainable_params['trainable%']:.2f}%"
+        f"Trainable params: {human_readable_trainable_params}, All params: {human_readable_all_param}, Trainable%: {trainable_params['trainable%']:.4f}%"
     )

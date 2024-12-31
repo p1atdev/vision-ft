@@ -130,7 +130,7 @@ class TextEncoder(nn.Module):
         self,
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
-        use_negative_prompts: bool = True,
+        use_negative_prompts: bool = False,
         max_token_length: int = DEFAULT_MAX_TOKEN_LENGTH,
     ):
         # 1. Normalize prompts

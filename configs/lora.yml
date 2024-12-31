@@ -10,10 +10,15 @@ peft:
   alpha: 1.0
   dropout: 0.0
 
+  dtype: bfloat16
+
+  include_keys: [".attn.", ".mlp.", ".modC.", ".modC.", ".modX."]
+  exclude_keys: ["text_encoder", "vae", "t_embedder", "final_linear"]
+
 dataset:
   folder: "data/sfw_0.1k/images"
-  num_repeats: 2
-  batch_size: 2
+  num_repeats: 4
+  batch_size: 1
 
   bucket_base_size: 1024
   step: 128
@@ -52,7 +57,7 @@ seed: 42
 num_train_epochs: 10
 
 trainer:
-  debug_mode: "dataset"
+  debug_mode: "1step"
 
 torch_compile: true
 fp32_matmul_precision: "high"

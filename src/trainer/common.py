@@ -161,7 +161,8 @@ class Trainer:
                 current_step += 1
                 self.model.before_train_step()
 
-                loss = self.model.train_step(batch)
+                with self.accelerator.autocast():
+                    loss = self.model.train_step(batch)
                 self.model.backward(loss)
 
                 self.model.after_train_step()
@@ -180,7 +181,8 @@ class Trainer:
                 for batch in tqdm(self.eval_dataloader, desc=f"Eval Epoch {epoch}"):
                     self.model.before_eval_step()
 
-                    loss = self.model.eval_step(batch)
+                    with self.accelerator.autocast():
+                        loss = self.model.eval_step(batch)
 
                     self.model.after_eval_step()
 
