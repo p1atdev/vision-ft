@@ -18,7 +18,6 @@ from ..modules.peft import (
     PeftConfigMixin,
     replace_to_peft_linear,
     print_trainable_parameters,
-    get_adapter_parameters,
 )
 
 
@@ -47,10 +46,13 @@ class Trainer:
         self.debug_mode = config.trainer.debug_mode
 
         self.accelerator = Accelerator(
-            log_with=get_trackers(config.trackers)
-            if (self.debug_mode is not False) and (config.trackers is not None)
-            else [],
+            log_with=get_trackers(config),
         )
+        if self.debug_mode is False and (tracker := config.tracker) is not None:
+            self.accelerator.init_trackers(
+                project_name=tracker.project_name,
+                config=config.model_dump(),
+            )
 
     def register_model_class(self, model_cls, *args, **kwargs):
         self.model_cls = model_cls
@@ -108,11 +110,23 @@ class Trainer:
     def setup_peft_if_needed(self):
         if self.peft_config is not None:
             self.print("Applying PEFT")
+            self.model._set_is_peft(True)
             replace_to_peft_linear(
                 self.model,
                 self.peft_config,
             )
             print_trainable_parameters(self.model, self.print)
+        else:
+            self.model._set_is_peft(False)
+
+    def prepare_model(self):
+        if self.accelerator.is_main_process:
+            self.model.before_setup_model()
+            self.model.setup_model()
+            self.setup_peft_if_needed()
+            self.model.after_setup_model()
+
+        self.model = self.accelerator.prepare(self.model)
 
     def before_train(self):
         self.torch_configuration()
@@ -136,10 +150,7 @@ class Trainer:
             return
 
         self.print("Setting up model")
-        self.model.before_setup_model()
-        self.model.setup_model()
-        self.setup_peft_if_needed()
-        self.model.after_setup_model()
+        self.prepare_model()
         self.print("Setting up optimizer")
         self.model.setup_optimizer()
 
@@ -201,14 +212,18 @@ class Trainer:
         if self.saving_strategy.should_save(epoch, steps):
             self.model.before_save_model()
 
-            with self.accelerator.main_process_first():
-                for callback in self.saving_callbacks:
-                    unwrapped_model = self.accelerator.unwrap_model(self.model.model)
-                    if self.peft_config is not None:
-                        state_dict = get_adapter_parameters(unwrapped_model)
-                    else:
-                        state_dict = unwrapped_model.state_dict()
-                    callback.save_state_dict(state_dict, epoch, steps)
+            if len(self.saving_callbacks) > 0:
+                if self.accelerator.is_main_process:
+                    unwrapped_model: ModelForTraining = self.accelerator.unwrap_model(
+                        self.model
+                    )
+                    state_dict = unwrapped_model.get_state_dict_to_save()
+                    self.print("Saving model...")
+
+                    for callback in self.saving_callbacks:
+                        callback.save_state_dict(state_dict, epoch, steps)
+
+                    self.print("Model saved.")
 
             self.accelerator.wait_for_everyone()
 

@@ -20,10 +20,10 @@ scheduler:
   name: "torch.optim.lr_scheduler.ConstantLR"
   args: {}
 
-trackers:
-  - name: wandb
-    args:
-      project: "hogehoge-1"
+tracker:
+  project_name: "hogehoge-1"
+  loggers:
+    - wandb
 
 saving:
   strategy:
@@ -42,5 +42,5 @@ num_train_epochs: 10
 trainer:
   debug_mode: "dataset"
 
-torch_compile: true
-fp32_matmul_precision: "high"
+  torch_compile: true
+  fp32_matmul_precision: "high"

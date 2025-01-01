@@ -5,13 +5,14 @@ import torch.nn as nn
 
 from accelerate import init_empty_weights
 
-from src.models.auraflow import AuraFlowConig, AuraFlowModel
+from src.models.auraflow import AuraFlowConig, AuraFlowModel, convert_to_comfy_key
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
 from src.dataset.text_to_image import TextToImageDatasetConfig
 from src.modules.loss.flow_match import prepare_noised_latents, loss_with_predicted_v
-from src.modules.loss.timestep import shift_randn
+from src.modules.loss.timestep import sigmoid_randn
+from src.modules.peft import get_adapter_parameters
 
 
 class AuraFlowForTraining(ModelForTraining, nn.Module):
@@ -21,7 +22,7 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
     model_config_class = AuraFlowConig
 
     def setup_model(self):
-        with self.accelerator.main_process_first():
+        if self.accelerator.is_main_process:
             with init_empty_weights():
                 self.model = AuraFlowModel(self.model_config)
 
@@ -60,7 +61,7 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
                 caption
             ).positive_embeddings
             latents = self.model.encode_image(pixel_values)
-            timesteps = shift_randn(
+            timesteps = sigmoid_randn(
                 latents_shape=latents.shape,
                 device=self.accelerator.device,
             )
@@ -85,6 +86,8 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
             predicted_noise=noise_pred,
         )
 
+        self.log("train/loss", v_loss, on_step=True, on_epoch=True)
+
         return v_loss
 
     def eval_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
@@ -94,7 +97,7 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
         super().before_setup_model()
 
     def after_setup_model(self):
-        with self.accelerator.main_process_first():
+        if self.accelerator.is_main_process:
             if self.config.trainer.gradient_checkpointing:
                 self.model.denoiser._set_gradient_checkpointing(True)
 
@@ -105,6 +108,17 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
 
     def before_backward(self):
         super().before_backward()
+
+    def get_state_dict_to_save(
+        self,
+    ) -> dict[str, torch.Tensor]:
+        self.model.state_dict()
+        if not self._is_peft:
+            return self.model.state_dict()
+
+        state_dict = get_adapter_parameters(self.model)
+        state_dict = {convert_to_comfy_key(k): v for k, v in state_dict.items()}
+        return state_dict
 
 
 @click.command()

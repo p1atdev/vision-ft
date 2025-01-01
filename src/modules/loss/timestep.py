@@ -55,7 +55,7 @@ def flux_shift_randn(
 
 
 # ref; https://github.com/kohya-ss/sd-scripts/blob/e89653975ddf429cdf0c0fd268da0a5a3e8dba1f/library/flux_train_utils.py#L429-L438
-def shift_randn(
+def shift_sigmoid_randn(
     latents_shape: torch.Size,
     device: torch.device,
     discrete_flow_shift: float = 3.1825,
@@ -69,5 +69,19 @@ def shift_randn(
     timesteps = logits_norm.sigmoid()
 
     timesteps = (timesteps * shift) / (1 + (shift - 1) * timesteps)
+
+    return timesteps
+
+
+def sigmoid_randn(
+    latents_shape: torch.Size,
+    device: torch.device,
+    sigmoid_scale: float = 1.0,
+):
+    batch_size, _channels, _height, _width = latents_shape
+
+    logits_norm = torch.randn(batch_size, device=device)
+    logits_norm = logits_norm * sigmoid_scale  # larger scale for more uniform sampling
+    timesteps = logits_norm.sigmoid()
 
     return timesteps

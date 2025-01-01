@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from accelerate import init_empty_weights
+from accelerate import init_empty_weights, Accelerator
 from safetensors.torch import save_file
 
 from src.modules.peft import (
@@ -10,7 +10,12 @@ from src.modules.peft import (
     LoRALinear,
     get_adapter_parameters,
 )
-from src.models.auraflow import AuraFlowConig, AuraFlowModel
+from src.models.auraflow import (
+    AuraFlowConig,
+    AuraFlowModel,
+    convert_to_original_key,
+    convert_to_comfy_key,
+)
 
 
 @torch.no_grad()
@@ -125,5 +130,20 @@ def test_save_lora_weight():
         model,
         config,
     )
+    peft_state_dict = get_adapter_parameters(model)
 
-    save_file(get_adapter_parameters(model), "output/lora_empty.safetensors")
+    assert all(key.startswith("denoiser.") for key in peft_state_dict.keys())
+
+    # lora with original key names
+    orig_state_dict = {
+        convert_to_original_key(key): value for key, value in peft_state_dict.items()
+    }
+    assert all(key.startswith("model.") for key in orig_state_dict.keys())
+    save_file(orig_state_dict, "output/lora_empty.safetensors")
+
+    # comfyui compatible key anmes
+    comfy_state_dict = {
+        convert_to_original_key(key): value for key, value in peft_state_dict.items()
+    }
+    assert all(key.startswith("diffusion_model.") for key in comfy_state_dict.keys())
+    save_file(comfy_state_dict, "output/lora_empty.safetensors")

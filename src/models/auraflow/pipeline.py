@@ -39,6 +39,13 @@ def convert_to_original_key(key: str) -> str:
     return key
 
 
+def convert_to_comfy_key(key: str) -> str:
+    key = key.replace("denoiser.", "diffusion_model.")
+    key = key.replace("vae.", VAE_TENSOR_PREFIX)
+    key = key.replace("text_encoder.model.", TEXT_ENCODER_TENSOR_PREFIX)
+    return key
+
+
 def convert_from_original_key(key: str) -> str:
     key = key.replace(DENOISER_TENSOR_PREFIX, "denoiser.")
     key = key.replace(VAE_TENSOR_PREFIX, "vae.")
@@ -136,15 +143,20 @@ class AuraFlowModel(nn.Module):
     # replace the prefix to match the original checkpoint
     def state_dict(
         self,
-        destination: dict[str, Tensor] | None = None,
+        destination: dict[str, torch.Tensor] | None = None,
         prefix: str = "",
         keep_vars: bool = False,
-    ) -> dict[str, Tensor]:
+    ) -> dict[str, torch.Tensor]:
         state_dict: dict[str, torch.Tensor] = super().state_dict(
             destination=destination,
             prefix=prefix,
             keep_vars=keep_vars,
         )
+        state_dict = {
+            tensor_utils.remove_orig_mod_prefix(key): value
+            for key, value in state_dict.items()
+        }
+
         # shared.weight is referenced by its encoder,
         # and removed when saving with safetensors' save_model().
         # We need to de-reference it here.

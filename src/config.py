@@ -3,7 +3,7 @@ from typing import Literal, Union
 import yaml
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .saving import (
     HFHubSavingCallbackConfig,
@@ -33,8 +33,14 @@ class SavingConfig(BaseModel):
 
 
 class TrackerConfig(BaseModel):
-    name: Literal["wandb", "tensorboard", "csv"]
-    args: dict = {}
+    project_name: str
+    loggers: list[Literal["wandb", "tensorboard"]]
+
+    @field_validator("loggers")
+    def check_loggers(cls, v, values):
+        if len(v) == 0:
+            raise ValueError("At least one logger should be provided")
+        return v
 
 
 DEBUG_MODE_TYPE = Literal[
@@ -69,7 +75,7 @@ class TrainConfig(BaseModel):
     optimizer: OptimizerConfig = OptimizerConfig()
     scheduler: SchedulerConfig | None = None
     saving: SavingConfig | None = SavingConfig()
-    trackers: list[TrackerConfig] | None = []
+    tracker: TrackerConfig | None = None
     trainer: TrainerConfig = TrainerConfig()
 
     seed: int = 42

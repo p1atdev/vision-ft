@@ -6,7 +6,7 @@ from torch import nn
 
 from .config import PeftConfigMixin, PEFT_TYPE
 from .lora import LoRALinear, LoRAConfig
-from ...utils.tensor import is_target_key
+from ...utils.tensor import is_target_key, remove_orig_mod_prefix
 from ...utils.dtype import str_to_dtype
 
 
@@ -78,7 +78,9 @@ def get_adapter_parameters(model: nn.Module) -> dict[str, torch.Tensor]:
         if (param_names := getattr(module, "adapter_param_names", None)) is not None:
             for state_key, state_value in module.state_dict().items():
                 if any(state_key.startswith(name) for name in param_names):
-                    adapter_params[f"{name}.{state_key}"] = state_value
+                    adapter_params[remove_orig_mod_prefix(f"{name}.{state_key}")] = (
+                        state_value
+                    )
 
     return adapter_params
 

@@ -5,7 +5,7 @@ model:
   dtype: bfloat16
 
   denoiser:
-    use_flash_attn: false
+    use_flash_attn: true
 
 peft:
   type: lora
@@ -21,7 +21,7 @@ peft:
 dataset:
   folder: "data/sfw_0.1k/images"
   num_repeats: 4
-  batch_size: 1
+  batch_size: 2
 
   bucket_base_size: 1024
   step: 128
@@ -38,11 +38,10 @@ scheduler:
   # name: "torch.optim.lr_scheduler.ConstantLR"
   # args: {}
 
-trackers:
-  []
-  # - name: wandb
-  #   args:
-  #     project: "mnist-1"
+tracker:
+  project_name: "auraflow-lora-1"
+  loggers:
+    - wandb
 
 saving:
   strategy:
@@ -51,7 +50,7 @@ saving:
     save_last: true
 
   callbacks:
-    - type: "safentensors" # or "safentensors" to don't push to hub
+    - type: "safentensors" # or "hf_hub" to push to hub
       name: "test-lora"
       save_dir: "./output/lora"
 
@@ -59,7 +58,7 @@ seed: 42
 num_train_epochs: 10
 
 trainer:
-  debug_mode: "1step"
+  # debug_mode: "1step"
 
   gradient_checkpointing: true
 

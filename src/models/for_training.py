@@ -26,6 +26,7 @@ class ModelForTraining(ABC, nn.Module):
     _current_step: int = 0
     _logs_at_step: dict = {}
     _logs_at_epoch: dict[str, list] = {}
+    _is_peft: bool = False
 
     def __init__(
         self,
@@ -44,6 +45,9 @@ class ModelForTraining(ABC, nn.Module):
     def validate_config(self):
         self.model_config = self.model_config_class.model_validate(self.config.model)
 
+    def _set_is_peft(self, is_peft: bool):
+        self._is_peft = is_peft
+
     @abstractmethod
     def before_setup_model(self):
         pass
@@ -54,16 +58,14 @@ class ModelForTraining(ABC, nn.Module):
 
     @abstractmethod
     def after_setup_model(self):
-        with self.accelerator.main_process_first():
-            if self.config.trainer.torch_compile:
-                self.print("torch.compile is enabled")
-                self.model = torch.compile(
-                    self.model,
-                    **self.config.trainer.torch_compile_args,
-                )  # type: ignore
+        if self.config.trainer.torch_compile:
+            self.print("torch.compile is enabled")
+            self.model = torch.compile(
+                self.model,
+                **self.config.trainer.torch_compile_args,
+            )  # type: ignore
 
         self.accelerator.wait_for_everyone()
-        self.model = self.accelerator.prepare(self.model)
 
     @abstractmethod
     def sanity_check(self):
@@ -146,6 +148,11 @@ class ModelForTraining(ABC, nn.Module):
 
     def after_eval_epoch(self):
         self._send_logs_at_epoch()
+
+    def get_state_dict_to_save(
+        self,
+    ) -> dict[str, torch.Tensor]:
+        return self.model.state_dict()
 
     def before_save_model(self):
         pass

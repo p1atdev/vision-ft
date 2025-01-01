@@ -25,6 +25,7 @@ def prepare_noised_latents(
     return NoisedLatents(noisy_latents, random_noise)
 
 
+# default MSE loss
 def loss_with_predicted_v(
     latents: torch.Tensor,
     random_noise: torch.Tensor,
@@ -35,9 +36,5 @@ def loss_with_predicted_v(
         predicted_noise,
         reduction="mean",
     )
-    # reduction="none",
-    # ).mean(dim=list(range(1, len(latents.shape))))
-    # mse_list = batchwise_mse.detach().cpu().reshape(-1).tolist()
-    # mse_with_time = [(t, mse) for t, mse in zip(time_step, mse_list)]
 
     return loss

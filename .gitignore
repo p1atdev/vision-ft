@@ -167,3 +167,4 @@ cython_debug/
 /wandb
 /data
 /dataset
+/projects
