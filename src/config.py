@@ -48,6 +48,16 @@ DEBUG_MODE_TYPE = Literal[
 class TrainerConfig(BaseModel):
     debug_mode: DEBUG_MODE_TYPE = False
 
+    torch_compile: bool = False
+    torch_compile_args: dict = {}
+
+    gradient_checkpointing: bool = False
+
+    # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
+    fp32_matmul_precision: Literal["highest", "high", "medium"] | None = None
+    # https://pytorch.org/docs/stable/notes/cuda.html
+    allow_tf32: bool = False
+
 
 class TrainConfig(BaseModel):
     model: dict | BaseModel
@@ -60,14 +70,11 @@ class TrainConfig(BaseModel):
     scheduler: SchedulerConfig | None = None
     saving: SavingConfig | None = SavingConfig()
     trackers: list[TrackerConfig] | None = []
-    trainer: TrainerConfig | None = None
+    trainer: TrainerConfig = TrainerConfig()
 
     seed: int = 42
 
     num_train_epochs: int = 1
-
-    torch_compile: bool = False
-    fp32_matmul_precision: Literal["highest", "high", "medium"] | None = None
 
     def to_dict(self) -> dict:
         return self.model_dump()

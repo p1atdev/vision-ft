@@ -174,3 +174,13 @@ class ModelSavingCallback(ABC):
         self, model: nn.Module, epoch: int, steps: int, metadata: dict | None = None
     ):
         pass
+
+    @abstractmethod
+    def save_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        epoch: int,
+        steps: int,
+        metadata: dict | None = None,
+    ):
+        pass

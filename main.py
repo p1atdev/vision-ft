@@ -1,7 +1,7 @@
 import click
 
 import torch
-from torch import nn
+import torch.nn as nn
 
 from accelerate import init_empty_weights
 
@@ -24,7 +24,8 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
         with self.accelerator.main_process_first():
             with init_empty_weights():
                 self.model = AuraFlowModel(self.model_config)
-        self.model._load_original_weights()
+
+            self.model._load_original_weights()
 
     def sanity_check(self):
         latent = self.model.prepare_latents(
@@ -37,7 +38,7 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
         prompt = torch.randn(
             1,
             256,  # max token len
-            self.model_config.denoiser_config.joint_attention_dim,
+            self.model_config.denoiser.joint_attention_dim,
             device=self.accelerator.device,
         )
         timestep = torch.tensor([0.5], device=self.accelerator.device)
@@ -93,6 +94,10 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
         super().before_setup_model()
 
     def after_setup_model(self):
+        with self.accelerator.main_process_first():
+            if self.config.trainer.gradient_checkpointing:
+                self.model.denoiser._set_gradient_checkpointing(True)
+
         super().after_setup_model()
 
     def before_eval_step(self):

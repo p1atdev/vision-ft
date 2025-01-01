@@ -33,7 +33,7 @@ class AuraFlowConig(BaseModel):
 
     dtype: str = "bfloat16"
 
-    denoiser_config: DenoiserConfig = DenoiserConfig()
+    denoiser: DenoiserConfig = DenoiserConfig()
 
     def get_dtype(self) -> torch.dtype:
         return str_to_dtype(self.dtype)

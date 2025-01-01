@@ -4,6 +4,9 @@ model:
 
   dtype: bfloat16
 
+  denoiser:
+    use_flash_attn: false
+
 peft:
   type: lora
   rank: 4
@@ -27,8 +30,9 @@ dataset:
 
 optimizer:
   name: "schedulefree.RAdamScheduleFree"
+  # name: "bitsandbytes.optim.AdamW8bit"
   args:
-    lr: 0.005
+    lr: 0.001
 
 scheduler:
   # name: "torch.optim.lr_scheduler.ConstantLR"
@@ -41,17 +45,15 @@ trackers:
   #     project: "mnist-1"
 
 saving:
-  # strategy:
-  #   per_epochs: 5
-  #   per_steps: null
-  #   save_last: true
+  strategy:
+    per_epochs: 1
+    per_steps: null
+    save_last: true
 
-  # callbacks:
-  #   - type: "hf_hub" # or "safentensors" to don't push to hub
-  #     name: "mnist"
-  #     save_dir: "./output/mnist"
-  #     hub_id: "p1atdev/test"
-  #     dir_in_repo: "/mnist-2"
+  callbacks:
+    - type: "safentensors" # or "safentensors" to don't push to hub
+      name: "test-lora"
+      save_dir: "./output/lora"
 
 seed: 42
 num_train_epochs: 10
@@ -59,5 +61,10 @@ num_train_epochs: 10
 trainer:
   debug_mode: "1step"
 
-torch_compile: true
-fp32_matmul_precision: "high"
+  gradient_checkpointing: true
+
+  torch_compile: true
+  torch_compile_args:
+    mode: max-autotune
+    fullgraph: true
+  fp32_matmul_precision: "medium"

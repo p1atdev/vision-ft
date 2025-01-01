@@ -52,7 +52,7 @@ class AuraFlowModel(nn.Module):
 
         self.config = config
 
-        self.denoiser = Denoiser.from_config(config.denoiser_config)
+        self.denoiser = Denoiser.from_config(config.denoiser)
         vae = VAE.from_config(DEFAULT_VAE_CONFIG)
         assert isinstance(vae, VAE)
         self.vae = vae

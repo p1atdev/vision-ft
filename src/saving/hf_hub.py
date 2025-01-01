@@ -2,6 +2,7 @@ from pathlib import Path
 from safetensors.torch import save_file
 from huggingface_hub import HfApi
 
+from torch._tensor import Tensor
 from torch.nn.modules import Module
 
 from .safetensors import SafetensorsSavingCallback, SafetensorsSavingCallbackConfig
@@ -36,7 +37,18 @@ class HFHubSavingCallback(SafetensorsSavingCallback):
         self.repo_type = repo_type
 
     def save(self, model: Module, epoch: int, steps: int, metadata: dict | None = None):
-        save_path = super().save(model, epoch, steps, metadata)
+        state_dict = model.state_dict()
+
+        return self.save_state_dict(state_dict, epoch, steps, metadata)
+
+    def save_state_dict(
+        self,
+        state_dict: dict[str, Tensor],
+        epoch: int,
+        steps: int,
+        metadata: dict | None = None,
+    ):
+        save_path = super().save_state_dict(state_dict, epoch, steps, metadata)
         filename = save_path.name
 
         self.api.upload_file(

@@ -54,8 +54,13 @@ class ModelForTraining(ABC, nn.Module):
 
     @abstractmethod
     def after_setup_model(self):
-        if self.config.torch_compile:
-            self.model = torch.compile(self.model)  # type: ignore
+        with self.accelerator.main_process_first():
+            if self.config.trainer.torch_compile:
+                self.print("torch.compile is enabled")
+                self.model = torch.compile(
+                    self.model,
+                    **self.config.trainer.torch_compile_args,
+                )  # type: ignore
 
         self.accelerator.wait_for_everyone()
         self.model = self.accelerator.prepare(self.model)

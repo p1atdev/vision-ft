@@ -18,6 +18,7 @@ from ..modules.peft import (
     PeftConfigMixin,
     replace_to_peft_linear,
     print_trainable_parameters,
+    get_adapter_parameters,
 )
 
 
@@ -43,7 +44,7 @@ class Trainer:
         self.peft_config = config.peft
 
         self.seed = seed
-        self.debug_mode = False if config.trainer is None else config.trainer.debug_mode
+        self.debug_mode = config.trainer.debug_mode
 
         self.accelerator = Accelerator(
             log_with=get_trackers(config.trackers)
@@ -114,6 +115,8 @@ class Trainer:
             print_trainable_parameters(self.model, self.print)
 
     def before_train(self):
+        self.torch_configuration()
+
         if self.debug_mode is not False:
             self.print(f"Debug mode is enabled: {self.debug_mode}")
 
@@ -198,8 +201,16 @@ class Trainer:
         if self.saving_strategy.should_save(epoch, steps):
             self.model.before_save_model()
 
-            for callback in self.saving_callbacks:
-                callback.save(self.model.model, epoch, steps)
+            with self.accelerator.main_process_first():
+                for callback in self.saving_callbacks:
+                    unwrapped_model = self.accelerator.unwrap_model(self.model.model)
+                    if self.peft_config is not None:
+                        state_dict = get_adapter_parameters(unwrapped_model)
+                    else:
+                        state_dict = unwrapped_model.state_dict()
+                    callback.save_state_dict(state_dict, epoch, steps)
+
+            self.accelerator.wait_for_everyone()
 
             self.model.after_save_model()
 
@@ -215,6 +226,15 @@ class Trainer:
             self.print("debugging eval_dataloader...")
             for batch in self.eval_dataloader:
                 self.print(batch)
+
+    def torch_configuration(self):
+        if self.config.trainer.fp32_matmul_precision is not None:
+            torch.set_float32_matmul_precision(
+                self.config.trainer.fp32_matmul_precision
+            )
+
+        if self.config.trainer.allow_tf32:
+            torch.backends.cuda.matmul.allow_tf32 = True
 
     # User-facing method
     def train(self):

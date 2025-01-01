@@ -2,9 +2,12 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
+
 
 from flash_attn import flash_attn_func
 
+import torch.utils.checkpoint
 from transformers.activations import ACT2FN
 
 from .config import DenoiserConfig
@@ -599,6 +602,7 @@ class MMDiT(nn.Module):
         self.max_pos_embed_size = max_pos_embed_size
 
         self.use_flash_attn = use_flash_attn
+        self.gradient_checkpointing = False
 
         self.h_max = int(self.max_pos_embed_size**0.5)
         self.w_max = int(self.max_pos_embed_size**0.5)
@@ -622,6 +626,9 @@ class MMDiT(nn.Module):
     @property
     def dtype(self):
         return next(self.parameters()).dtype
+
+    def _set_gradient_checkpointing(self, value: bool):
+        self.gradient_checkpointing = value
 
     # https://github.com/huggingface/diffusers/blob/825979ddc3d03462287f1f5439e89ccac8cc71e9/src/diffusers/models/transformers/auraflow_transformer_2d.py#L71-L84
     def pe_selection_index_based_on_dim(self, h: int, w: int):
@@ -728,19 +735,43 @@ class MMDiT(nn.Module):
         timestep = timestep[:batch_size]
         global_cond = self.t_embedder(timestep)
 
+        def create_custom_forward(module):
+            def custom_forward(*inputs):
+                return module(*inputs)
+
+            return custom_forward
+
         # 3. double layers
         if len(self.double_layers) > 0:
             for layer in self.double_layers:
-                cond_tokens, patches = layer(
-                    cond_tokens, patches, global_cond, **kwargs
-                )
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    cond_tokens, patches = checkpoint.checkpoint(  # type: ignore
+                        create_custom_forward(layer),
+                        cond_tokens,
+                        patches,
+                        global_cond,
+                        use_reentrant=False,
+                    )
+                else:
+                    cond_tokens, patches = layer(
+                        cond_tokens, patches, global_cond, **kwargs
+                    )
 
         # 4. single layers
         if len(self.single_layers) > 0:
             cond_tokens_len = cond_tokens.size(1)
             context = torch.cat([cond_tokens, patches], dim=1)
             for layer in self.single_layers:
-                context = layer(context, global_cond, **kwargs)
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    context = checkpoint.checkpoint(  # type: ignore
+                        create_custom_forward(layer),
+                        context,
+                        global_cond,
+                        use_reentrant=False,
+                    )
+                else:
+                    context = layer(context, global_cond, **kwargs)
+            assert isinstance(context, torch.Tensor)
 
             # take only patches
             patches = context[:, cond_tokens_len:]
