@@ -1,28 +1,19 @@
-# pytorch training template
+# AuraFlow finetuning scripts
 
-Key frameworks:
+WIP
 
-- [PyTorch](https://pytorch.org/)
-- [Lightning Fabric](https://lightning.ai/docs/fabric/2.4.0/)
-- [HuggingFace Hub](https://huggingface.co/)
-- [Pydantic](https://docs.pydantic.dev/latest/)
-- [Wandb](https://wandb.ai/)
+## Features
+
+(planned)
+
+- [NF4 model](https://huggingface.co/p1atdev/AuraFlow-v0.3-bnb-nf4) loading 
+- QLoRA with bitsandbytes
+- Aspect ratio bucketing
 
 ## Setup
 
 ```bash
 uv sync
-```
-
-### Extra libraries
-
-- `optimizers`: some popular optimizers (e.g. `schedulefree`)
-- `quant`: quantization tools (e.g. `bitsandbytes`)
-
-To use all:
-
-```bash
-uv sync --extra optimizers --extra quant
 ```
 
 ## Train
@@ -32,19 +23,35 @@ Distributed training is not tested yet.
 Simplest example:
 
 ```bash
-fabric run \
+accelerate launch \
     ./main.py \
-    --config ./configs/mnist.yaml
+    --config ./configs/lora.yaml
 ```
 
-With options:
+> [!WARNING]
+> This may be changed in the future.
 
-```bash
-fabric run \
-    --accelerator cuda \
-    --precision bf16-mixed \
-    ./main.py \
-    --config ./configs/mnist.yaml
-```
+
+## References
+
+- https://github.com/kohya-ss/sd-scripts
+  - Heavily inspired by this repository.
+
+- https://github.com/cloneofsimo/minRF
+  - Model implementation
+
+- https://github.com/microsoft/LoRA
+- https://github.com/huggingface/peft
+  - Peft logic and implementation
+
+- https://github.com/huggingface/diffusers
+- https://github.com/Lightning-AI/pytorch-lightning
+  - Traning cycle and API design
+
+- https://github.com/NovelAI/novelai-aspect-ratio-bucketing
+  - Aspect ratio bucketing
+
+- https://github.com/bitsandbytes-foundation/bitsandbytes
+  - Quantization
 
 
