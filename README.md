@@ -8,6 +8,7 @@ WIP
 
 - [NF4 model](https://huggingface.co/p1atdev/AuraFlow-v0.3-bnb-nf4) loading 
 - QLoRA with bitsandbytes
+- [Flash Attention](https://github.com/Dao-AILab/flash-attention) support
 - Aspect ratio bucketing
 
 ## Setup
