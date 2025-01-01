@@ -90,10 +90,12 @@ class AspectRatioBucketConfig(DatasetConfig):
 class AspectRatioBucketManager:
     buckets: np.ndarray
     aspect_ratios: np.ndarray
+    resolutions: np.ndarray
 
     def __init__(self, buckets: np.ndarray):
         self.buckets = buckets
         self.aspect_ratios = self.buckets[:, 0] / self.buckets[:, 1]  # width / height
+        self.resolutions = self.buckets[:, 0] * self.buckets[:, 1]  # width * height
 
     def __len__(self) -> int:
         return self.buckets.shape[0]
@@ -124,11 +126,26 @@ class AspectRatioBucketManager:
         min_diff = float("inf")
         best_bucket_idx = None
 
-        for idx, bucket_ar in enumerate(self.aspect_ratios):
+        # Sort indices by resolution in descending order
+        sorted_indices = np.argsort(-self.resolutions)
+
+        for idx in sorted_indices:
+            bucket_w, bucket_h = self.buckets[idx]
+
+            # buckets must be smaller than the provided size
+            if bucket_w > width or bucket_h > height:
+                # if the bucket is larger than the provided size, skip
+                continue
+
+            bucket_ar = self.aspect_ratios[idx]
             diff = abs(provided_ar - bucket_ar)
-            if diff < min_diff:
-                min_diff = diff
-                best_bucket_idx = idx
+
+            # if the difference is larger than the previous one, break
+            if diff > min_diff and best_bucket_idx is not None:
+                break
+
+            min_diff = diff
+            best_bucket_idx = idx
 
         assert best_bucket_idx is not None
 

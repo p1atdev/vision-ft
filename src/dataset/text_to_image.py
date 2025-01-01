@@ -1,17 +1,16 @@
 import os
-from PIL import Image
 import imagesize
 from pathlib import Path
 from pydantic import BaseModel
 import warnings
 import json
+from functools import reduce
 from collections import defaultdict
 from typing import Sequence, Iterator
 
 import numpy as np
 import torch
 import torch.utils.data as data
-import torchvision.transforms.functional as F
 import torchvision.transforms.v2 as v2
 import torchvision.io as io
 
@@ -29,6 +28,7 @@ from .aspect_ratio_bucket import (
     AspectRatioBucket,
     print_arb_info,
 )
+from .caption import CaptionProcessorList
 
 
 class ImageCaptionPair(BaseModel):
@@ -56,6 +56,7 @@ class TextToImageBucket(AspectRatioBucket):
     """
 
     items: Dataset
+    caption_processors: CaptionProcessorList
 
     def __init__(
         self,
@@ -65,6 +66,7 @@ class TextToImageBucket(AspectRatioBucket):
         height: int,
         do_upscale: bool,
         num_repeats: int,
+        caption_processors: CaptionProcessorList = [],
     ):
         ds = Dataset.from_generator(
             self._generate_ds_from_pairs,
@@ -95,6 +97,7 @@ class TextToImageBucket(AspectRatioBucket):
         self.height = height
         self.do_upscale = do_upscale
         self.num_repeats = num_repeats
+        self.caption_processors = caption_processors
 
     def __getitem__(self, idx: int | slice):
         # the __len__ is multiplied by num_repeats,
@@ -102,8 +105,6 @@ class TextToImageBucket(AspectRatioBucket):
         # we need to get the real index by modulo operation.
         local_idx = self.to_local_idx(idx)
         batch: dict[str, Sequence | torch.Tensor] = self.items[local_idx]
-
-        # print(batch["image"])
 
         # transform image
         if "image" in batch:
@@ -113,6 +114,20 @@ class TextToImageBucket(AspectRatioBucket):
             #  convert to tensor and apply transforms
             images = [self.image_transform(image) for image in images]
             batch["image"] = torch.stack(images)
+
+        if "caption" in batch:
+            captions: list[str] = batch["caption"]  # type: ignore
+            assert isinstance(captions, list)
+            # apply all caption processors
+            captions = [
+                reduce(
+                    lambda c, processor: processor(c),
+                    self.caption_processors,
+                    caption,
+                )  # type: ignore
+                for caption in captions
+            ]
+            batch["caption"] = captions
 
         return batch
 
@@ -138,6 +153,9 @@ class TextToImageDatasetConfig(AspectRatioBucketConfig):
 
     do_upscale: bool = False
     num_repeats: int = 1
+
+    # shuffle, setting prefix, dropping tags, etc.
+    caption_processors: CaptionProcessorList = []
 
     def _retrive_images(self):
         pairs: list[ImageCaptionPair] = []
@@ -218,6 +236,7 @@ class TextToImageDatasetConfig(AspectRatioBucketConfig):
                 height=height,
                 do_upscale=self.do_upscale,
                 num_repeats=self.num_repeats,
+                caption_processors=self.caption_processors,
             )
             buckets.append(bucket)
 
