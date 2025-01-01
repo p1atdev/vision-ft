@@ -8,7 +8,7 @@ from .config import PeftConfigMixin
 
 class LoRAConfig(PeftConfigMixin):
     type: Literal["lora"] = "lora"
-    rank: int = 4
+    rank: int
     alpha: float = 1.0
     dropout: float = 0.0
     use_bias: bool = False

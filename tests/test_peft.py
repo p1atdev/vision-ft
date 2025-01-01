@@ -35,7 +35,7 @@ def test_replace_lora_linear():
             )
             self.layer3 = nn.ModuleList(
                 [
-                    nn.Linear(10, 10),  # <- target
+                    nn.Linear(10, 20),  # <- target
                 ]
             )
 
@@ -67,10 +67,14 @@ def test_replace_lora_linear():
     )
 
     assert isinstance(model.layer1[0], LoRALinear)
+    assert model.layer1[0].lora_down.weight.T.shape == torch.Size([10, 4])
+    assert model.layer1[0].lora_up.weight.T.shape == torch.Size([4, 10])
     assert isinstance(model.layer1[2], nn.Linear)
     assert isinstance(model.layer2[0], nn.Linear)
     assert isinstance(model.layer2[2], nn.Linear)
     assert isinstance(model.layer3[0], LoRALinear)
+    assert model.layer3[0].lora_down.weight.T.shape == torch.Size([10, 4])
+    assert model.layer3[0].lora_up.weight.T.shape == torch.Size([4, 20])
 
     lora_output = model(inputs)
 
@@ -143,7 +147,7 @@ def test_save_lora_weight():
 
     # comfyui compatible key anmes
     comfy_state_dict = {
-        convert_to_original_key(key): value for key, value in peft_state_dict.items()
+        convert_to_comfy_key(key): value for key, value in peft_state_dict.items()
     }
     assert all(key.startswith("diffusion_model.") for key in comfy_state_dict.keys())
     save_file(comfy_state_dict, "output/lora_empty.safetensors")

@@ -5,7 +5,15 @@ model:
   dtype: bfloat16
 
 peft:
-  type: none
+  type: lora
+  rank: 8
+  alpha: 1.0
+  dropout: 0.0
+
+  dtype: bfloat16
+
+  include_keys: [".attn.", ".mlp.", ".modC.", ".modC.", ".modX."]
+  exclude_keys: ["text_encoder", "vae", "t_embedder", "final_linear"]
 
 dataset:
   folder: "data/images"

@@ -10,7 +10,7 @@ from .saving import (
     SafetensorsSavingCallbackConfig,
     ModelSavingStrategyConfig,
 )
-from .modules.peft import PeftConfigMixin
+from .modules.peft import PeftConfigUnion
 
 
 class OptimizerConfig(BaseModel):
@@ -70,7 +70,7 @@ class TrainConfig(BaseModel):
     dataset: dict | BaseModel
     # TODO: loss config
     # loss: dict | BaseModel
-    peft: PeftConfigMixin | None = None
+    peft: PeftConfigUnion | None = None
 
     optimizer: OptimizerConfig = OptimizerConfig()
     scheduler: SchedulerConfig | None = None

@@ -5,3 +5,5 @@ from .functional import (
     get_adapter_parameters,
     print_trainable_parameters,
 )
+
+PeftConfigUnion = LoRAConfig

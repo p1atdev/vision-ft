@@ -69,6 +69,7 @@ class TextToImageBucket(AspectRatioBucket):
         ds = Dataset.from_generator(
             self._generate_ds_from_pairs,
             gen_kwargs={"pairs": items},
+            cache_dir="cache",
         )
 
         super().__init__(
@@ -76,23 +77,24 @@ class TextToImageBucket(AspectRatioBucket):
             batch_size=batch_size,
         )
 
-        self.width = width
-        self.height = height
-        self.do_upscale = do_upscale
-        self.num_repeats = num_repeats
-
-        self.image_transforms = v2.Compose(
+        # random crop
+        self.image_transform = v2.Compose(
             [
                 ObjectCoverResize(
                     width,
                     height,
                     do_upscale=do_upscale,
                 ),
-                v2.RandomCrop(size=(height, width), padding=False),
+                v2.RandomCrop(size=(height, width), padding=None),
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
                 v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
             ]
         )
+
+        self.width = width
+        self.height = height
+        self.do_upscale = do_upscale
+        self.num_repeats = num_repeats
 
     def __getitem__(self, idx: int | slice):
         # the __len__ is multiplied by num_repeats,
@@ -105,16 +107,18 @@ class TextToImageBucket(AspectRatioBucket):
 
         # transform image
         if "image" in batch:
-            images = batch["image"]  # this is now (BCHW) list of uint8
+            # this is a list of image paths
+            image_paths: list[str] = batch["image"]  # type: ignore
+            images = [io.decode_image(image_path) for image_path in image_paths]
             #  convert to tensor and apply transforms
-            images = [self.image_transforms(torch.tensor(image)) for image in images]
+            images = [self.image_transform(image) for image in images]
             batch["image"] = torch.stack(images)
 
         return batch
 
     def _generate_ds_from_pairs(self, pairs: list[ImageCaptionPair]) -> Iterator:
         for pair in pairs:
-            image = io.decode_image(str(pair.image)).numpy()
+            image = str(pair.image)
             caption = pair.read_caption()
 
             yield {

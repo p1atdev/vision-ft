@@ -65,5 +65,8 @@ def test_text_to_image_dataset():
         assert img.shape[0] == batch_size, img.shape
         assert len(txt) == batch_size
 
+        # image is -1 ~ 1 and must not be pure black (-1)
+        assert img.max() > -1
+
         if i > 10:
             break
