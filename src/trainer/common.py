@@ -167,24 +167,25 @@ class Trainer:
         for epoch in range(1, total_epochs + 1):  # shift to 1-indexed
             self.model.before_train_epoch()
 
-            for steps, batch in tqdm(
-                enumerate(self.train_dataloader),
-                total=len(self.train_dataloader),
-                desc=f"Train Epoch {epoch}",
-            ):
-                current_step += 1
-                self.model.before_train_step()
+            with tqdm(
+                total=len(self.train_dataloader), desc=f"Train Epoch {epoch}"
+            ) as pbar:
+                for _steps, batch in enumerate(self.train_dataloader):
+                    current_step += 1
+                    self.model.before_train_step()
 
-                with self.accelerator.autocast():
-                    loss = self.model.train_step(batch)
-                self.model.backward(loss)
+                    with self.accelerator.autocast():
+                        loss = self.model.train_step(batch)
+                    self.model.backward(loss)
+                    pbar.set_postfix({"loss": loss.item()})
 
-                self.model.after_train_step()
+                    self.model.after_train_step()
+                    pbar.update(1)
 
-                self.call_saving_callbacks(epoch, current_step)
+                    self.call_saving_callbacks(epoch, current_step)
 
-                if self.debug_mode == "1step":
-                    break
+                    if self.debug_mode == "1step":
+                        break
 
             self.model.after_train_epoch()
             self.model.log("epoch", epoch)
@@ -192,16 +193,21 @@ class Trainer:
             if self.eval_dataloader is not None:
                 self.model.before_eval_epoch()
 
-                for batch in tqdm(self.eval_dataloader, desc=f"Eval Epoch {epoch}"):
-                    self.model.before_eval_step()
+                with tqdm(
+                    total=len(self.eval_dataloader), desc=f"Eval Epoch {epoch}"
+                ) as pbar:
+                    for _steps, batch in enumerate(self.eval_dataloader):
+                        self.model.before_eval_step()
 
-                    with self.accelerator.autocast():
-                        loss = self.model.eval_step(batch)
+                        with self.accelerator.autocast():
+                            loss = self.model.eval_step(batch)
+                        pbar.set_postfix({"loss": loss.item()})
 
-                    self.model.after_eval_step()
+                        self.model.after_eval_step()
+                        pbar.update(1)
 
-                    if self.debug_mode == "1step":
-                        break
+                        if self.debug_mode == "1step":
+                            break
 
                 self.model.after_eval_epoch()
 
