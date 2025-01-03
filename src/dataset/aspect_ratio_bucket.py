@@ -151,21 +151,6 @@ class AspectRatioBucketManager:
 
         return best_bucket_idx
 
-    def is_larger_than_bucket_size(
-        self,
-        width: int,
-        height: int,
-        bucket_idx: int,
-    ) -> bool:
-        """
-        Check if the image size is larger than the bucket size
-        """
-        w, h = self.buckets[bucket_idx]
-        if width >= w and height >= h:
-            return True
-
-        return False
-
 
 def print_arb_info(bucket_ds: Sequence[AspectRatioBucket], print_fn=print):
     """

@@ -205,21 +205,17 @@ class TextToImageDatasetConfig(AspectRatioBucketConfig):
 
         # classify images into buckets
         for pair in self._retrive_images():
-            bucket_idx = arb_manager.find_nearest(pair.width, pair.height)
-            if (
-                not arb_manager.is_larger_than_bucket_size(
-                    pair.width, pair.height, bucket_idx
-                )
-                and not self.do_upscale
-            ):
+            try:
+                # TODO: current is only the behavior of (not do_upscale)
+                bucket_idx = arb_manager.find_nearest(pair.width, pair.height)
+                bucket_subsets[bucket_idx].append(pair)
+                # TODO: implement upscale
+            except:
                 warnings.warn(
-                    f"Image size {pair.width}x{pair.height} is smaller than the bucket size \
-                    {ar_buckets[bucket_idx][0]}x{ar_buckets[bucket_idx][1]}, and `do_upscale` \
-                    is set False. Skipping...",
+                    f"Image size {pair.width}x{pair.height} is too small, and `do_upscale` is set False. Skipping...",
                     UserWarning,
                 )
                 continue
-            bucket_subsets[bucket_idx].append(pair)
 
         # create buckets
         buckets = []
