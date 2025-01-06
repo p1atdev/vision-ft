@@ -8,6 +8,7 @@ from .config import PeftConfigMixin, PEFT_TYPE
 from .lora import LoRALinear, LoRAConfig
 from ...utils.tensor import is_target_key, remove_orig_mod_prefix
 from ...utils.dtype import str_to_dtype
+from ..quant.functional import collect_children_keys
 
 
 def _get_peft_linear(
@@ -83,6 +84,38 @@ def get_adapter_parameters(model: nn.Module) -> dict[str, torch.Tensor]:
                     )
 
     return adapter_params
+
+
+def _load_peft_weight(
+    model: nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    prefix: str = "",
+):
+    for name, layer in model.named_children():
+        full_name = f"{prefix}{name}"
+
+        if isinstance(layer, nn.Linear):
+            adapter_state_dict = {
+                param_name: state_dict.get(f"{full_name}.{param_name}")
+                for param_name in LoRALinear.adapter_weight_names
+            }
+            if all([value is not None for value in adapter_state_dict.values()]):
+                lora_layer = LoRALinear.from_weights(
+                    adapter_state_dict,  # type: ignore
+                    layer,
+                )
+                setattr(model, name, lora_layer)
+
+        else:
+            _load_peft_weight(
+                layer,
+                state_dict,
+                f"{full_name}.",
+            )
+
+
+def load_peft_weight(model: nn.Module, state_dict: dict[str, torch.Tensor]) -> None:
+    _load_peft_weight(model, state_dict)
 
 
 # ref: https://github.com/huggingface/peft/blob/6d458b300fc2ed82e19f796b53af4c97d03ea604/examples/fp4_finetuning/finetune_fp4_opt_bnb_peft.py#L92-L104

@@ -11,6 +11,10 @@ import torch.utils.checkpoint
 from transformers.activations import ACT2FN
 
 from .config import DenoiserConfig
+from ...modules.positional_encoding.rope import (
+    applye_rope_frequencies,
+    RoPEFrequency,
+)
 
 # DEFAULT_DENOISER_CONFIG = {
 #     "attention_head_dim": 256,
@@ -125,6 +129,32 @@ def scaled_qkv_attention(
         ).permute(0, 2, 1, 3)  # back to (batch_size, seq_len, num_heads, head_dim)
 
 
+def apply_rope_qk(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    rope_freqs: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Applies positional encoding to query and key tensors.
+
+    Args:
+        rope_freqs (torch.Tensor): the RoPE frequencies (seq_len, head_dim//2, 2)
+        q (torch.Tensor): Query tensor of shape (batch_size, seq_len, num_heads, head_dim)
+        k (torch.Tensor): Key tensor of shape (batch_size, seq_len, num_heads, head_dim)
+
+    Returns:
+        torch.Tensor: Query and key tensors with positional encoding applied.
+    """
+
+    q, k = q.transpose(1, 2), k.transpose(1, 2)  # swap seq_len and num_heads
+
+    q = applye_rope_frequencies(q, rope_freqs)
+    k = applye_rope_frequencies(k, rope_freqs)
+
+    q, k = q.transpose(1, 2), k.transpose(1, 2)  # swap back
+
+    return q, k
+
+
 class AuraMLP(nn.Module):
     def __init__(
         self, input_dim: int, hidden_dim: int | None = None, hidden_act: str = "silu"
@@ -181,6 +211,7 @@ class SingleAttention(nn.Module):
         n_heads: int,
         mh_qknorm: bool = False,
         use_flash_attn: bool = False,
+        use_rope: bool = False,
     ):
         super().__init__()
 
@@ -205,8 +236,12 @@ class SingleAttention(nn.Module):
             else Fp32LayerNorm(self.head_dim, bias=False, elementwise_affine=False)
         )
 
+        self.use_rope = use_rope
+
     # @torch.compile()
-    def forward(self, condition: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, condition: torch.Tensor, rope_freqs: torch.Tensor | None = None
+    ) -> torch.Tensor:
         batch_size, seq_len, _dim = condition.shape
 
         # 1. qkv projection
@@ -217,6 +252,13 @@ class SingleAttention(nn.Module):
 
         # apply layer norm to q and k
         q, k = self.q_norm1(q), self.k_norm1(k)
+
+        # 1.5 apply RoPE
+        if self.use_rope is not None:
+            assert isinstance(
+                rope_freqs, torch.Tensor
+            ), "use_rope is specified but rope_freqs is not provided"
+            q, k = apply_rope_qk(q, k, rope_freqs)
 
         # 2. attention
         output = scaled_qkv_attention(
@@ -242,6 +284,7 @@ class DoubleAttention(nn.Module):
         n_heads: int,
         mh_qknorm: bool = False,
         use_flash_attn: bool = False,
+        use_rope: bool = False,
     ):
         super().__init__()
 
@@ -283,15 +326,21 @@ class DoubleAttention(nn.Module):
             else Fp32LayerNorm(self.head_dim, bias=False, elementwise_affine=False)
         )
 
+        self.use_rope = use_rope
+
     # @torch.compile()
     def forward(
-        self, condition: torch.Tensor, latent: torch.Tensor
+        self,
+        condition: torch.Tensor,
+        latent: torch.Tensor,
+        rope_freqs: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         assert condition.shape[0] == latent.shape[0], "batch size must be the same"
 
         batch_size, cond_seq_len, _cond_dim = condition.shape
         batch_size, latent_seq_len, _latent_dim = latent.shape
 
+        # 1. get qkv for projection
         cond_q, cond_k, cond_v = (
             self.w1q(condition),
             self.w1k(condition),
@@ -319,7 +368,14 @@ class DoubleAttention(nn.Module):
             torch.cat([cond_v, lat_v], dim=1),
         )
 
-        # attention
+        # 1.5 apply RoPE
+        if self.use_rope is not None:
+            assert isinstance(
+                rope_freqs, torch.Tensor
+            ), "use_rope is specified but rope_freqs is not provided"
+            q, k = apply_rope_qk(q, k, rope_freqs)
+
+        # 2. attention
         output = scaled_qkv_attention(
             q,
             k,
@@ -330,10 +386,10 @@ class DoubleAttention(nn.Module):
         # flatten the last two dimensions (head_dim, n_heads)
         output = output.flatten(-2)
 
-        # split back
+        # 3. split back
         condition, latent = output.split([cond_seq_len, latent_seq_len], dim=1)
 
-        # out projection
+        # 4. out projection
         condition = self.w1o(condition)
         latent = self.w2o(latent)
 
@@ -347,6 +403,7 @@ class MMDiTBlock(nn.Module):
         heads: int = 8,
         hidden_act: str = "silu",
         use_flash_attn: bool = False,
+        use_rope: bool = False,
     ):
         super().__init__()
 
@@ -367,7 +424,12 @@ class MMDiTBlock(nn.Module):
             nn.Linear(dim, 6 * dim, bias=False),
         )
 
-        self.attn = DoubleAttention(dim, heads, use_flash_attn=use_flash_attn)
+        self.attn = DoubleAttention(
+            dim,
+            heads,
+            use_flash_attn=use_flash_attn,
+            use_rope=use_rope,
+        )
 
     # @torch.compile()
     def forward(
@@ -375,6 +437,7 @@ class MMDiTBlock(nn.Module):
         condition: torch.Tensor,
         patches: torch.Tensor,
         global_cond: torch.Tensor,  # e.g. timesteps
+        rope_freqs: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # 1. save residual
@@ -405,7 +468,7 @@ class MMDiTBlock(nn.Module):
         patches = modulate(self.normX1(patches), patches_shift_msa, patches_scale_msa)
 
         # 4. attention
-        condition, patches = self.attn(condition, patches)
+        condition, patches = self.attn(condition, patches, rope_freqs)
 
         # 5. condition residual and mlp
         condition = self.normC2(condition_res + cond_gate_msa.unsqueeze(1) * condition)
@@ -432,6 +495,7 @@ class DiTBlock(nn.Module):
         heads: int = 8,
         hidden_act: str = "silu",
         use_flash_attn: bool = False,
+        use_rope: bool = False,
     ):
         super().__init__()
 
@@ -443,7 +507,12 @@ class DiTBlock(nn.Module):
             nn.Linear(dim, 6 * dim, bias=False),
         )
 
-        self.attn = SingleAttention(dim, heads, use_flash_attn=use_flash_attn)
+        self.attn = SingleAttention(
+            dim,
+            heads,
+            use_flash_attn=use_flash_attn,
+            use_rope=use_rope,
+        )
         self.mlp = AuraMLP(dim, hidden_dim=dim * 4)
 
     # @torch.compile()
@@ -451,6 +520,7 @@ class DiTBlock(nn.Module):
         self,
         context: torch.Tensor,  # text condition and image patches
         global_cond: torch.Tensor,
+        rope_freqs: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         # 1. save residual
@@ -463,7 +533,7 @@ class DiTBlock(nn.Module):
         context = modulate(self.norm1(context), shift_msa, scale_msa)
 
         # 3. attention
-        context = self.attn(context)
+        context = self.attn(context, rope_freqs)
 
         # 4. residual and mlp
         context = self.norm2(context_res + gate_msa.unsqueeze(1) * context)
@@ -533,9 +603,14 @@ class MMDiT(nn.Module):
         n_register_tokens: int = 8,
         hidden_act: str = "silu",
         use_flash_attn: bool = False,
+        use_rope: bool = False,
+        rope_dim_sizes: list[int] = [32, 112, 112],
+        rope_theta: int = 10000,
     ):
         super().__init__()
 
+        self.attention_head_dim = attention_head_dim
+        self.num_attention_heads = num_heads
         self.inner_dim = attention_head_dim * num_heads
 
         self.t_embedder = TimestepEmbedder(self.inner_dim)
@@ -550,6 +625,16 @@ class MMDiT(nn.Module):
         self.init_x_linear = nn.Linear(
             patch_size * patch_size * in_channels, self.inner_dim
         )  # init linear for patchified image.
+
+        # positional encoding
+        if use_rope:
+            # rope
+            self.rope_frequency = RoPEFrequency(
+                dim_sizes=rope_dim_sizes,
+                theta=rope_theta,
+            )
+        else:
+            self.rope_frequency = None
 
         # learnable positional encoding
         self.positional_encoding = nn.Parameter(
@@ -569,9 +654,9 @@ class MMDiT(nn.Module):
                 MMDiTBlock(
                     self.inner_dim,
                     num_heads,
-                    # is_last=(idx == num_layers - 1),
                     hidden_act=hidden_act,
                     use_flash_attn=use_flash_attn,
+                    use_rope=use_rope,
                 )
             )
 
@@ -582,6 +667,7 @@ class MMDiT(nn.Module):
                     num_heads,
                     hidden_act=hidden_act,
                     use_flash_attn=use_flash_attn,
+                    use_rope=use_rope,
                 )
             )
 
@@ -602,6 +688,7 @@ class MMDiT(nn.Module):
         self.max_pos_embed_size = max_pos_embed_size
 
         self.use_flash_attn = use_flash_attn
+        self.use_rope = use_rope
         self.gradient_checkpointing = False
 
         self.h_max = int(self.max_pos_embed_size**0.5)
@@ -648,6 +735,12 @@ class MMDiT(nn.Module):
         end_w = start_w + w_p
         original_pe_indexes = original_pe_indexes[start_h:end_h, start_w:end_w]
         return original_pe_indexes.flatten()
+
+    def get_pos_encoding(self, h: int, w: int):
+        pos_idx = self.pe_selection_index_based_on_dim(h, w)
+        assert self.positional_encoding is not None
+
+        return self.positional_encoding[:, pos_idx]
 
     def unpatchify(
         self, patches: torch.Tensor, height: int, width: int
@@ -719,14 +812,7 @@ class MMDiT(nn.Module):
     ) -> torch.Tensor:
         batch_size, _in_channels, height, width = latent.shape
 
-        # 1. patchify
-        patches = self.patchify(latent)
-        patches = self.init_x_linear(patches)  # project
-        # add positional encoding
-        pos_idx = self.pe_selection_index_based_on_dim(height, width)
-        patches = patches + self.positional_encoding[:, pos_idx]
-
-        # 2. condition sequence
+        # 1. condition sequence
         cond_sequences = encoder_hidden_states[:batch_size]
         cond_tokens = self.cond_seq_linear(cond_sequences)
         cond_tokens = torch.cat(
@@ -735,6 +821,28 @@ class MMDiT(nn.Module):
         timestep = timestep[:batch_size]
         global_cond = self.t_embedder(timestep)
 
+        # 2. patchify
+        patches = self.patchify(latent)
+        patches = self.init_x_linear(patches)  # project
+
+        # 2.5 prepare positional encoding
+        if self.rope_frequency is not None:
+            # use RoPE
+            text_token_indices = self.rope_frequency.get_text_position_indices(
+                cond_tokens.size(1)
+            )
+            image_token_indices = self.rope_frequency.get_image_position_indices(
+                height, width
+            )
+            token_indices = torch.cat([text_token_indices, image_token_indices], dim=0)
+            rope_freqs = self.rope_frequency(token_indices)  # .to(self.device)
+
+        else:
+            # use learned positional encoding
+            patches = patches + self.get_pos_encoding(height, width)
+            rope_freqs = None
+
+        # for gradient checkpointing
         def create_custom_forward(module):
             def custom_forward(*inputs):
                 return module(*inputs)
@@ -750,11 +858,12 @@ class MMDiT(nn.Module):
                         cond_tokens,
                         patches,
                         global_cond,
+                        rope_freqs,
                         use_reentrant=False,
                     )
                 else:
                     cond_tokens, patches = layer(
-                        cond_tokens, patches, global_cond, **kwargs
+                        cond_tokens, patches, global_cond, rope_freqs, **kwargs
                     )
 
         # 4. single layers
@@ -767,10 +876,11 @@ class MMDiT(nn.Module):
                         create_custom_forward(layer),
                         context,
                         global_cond,
+                        rope_freqs,
                         use_reentrant=False,
                     )
                 else:
-                    context = layer(context, global_cond, **kwargs)
+                    context = layer(context, global_cond, rope_freqs, **kwargs)
             assert isinstance(context, torch.Tensor)
 
             # take only patches
@@ -806,6 +916,9 @@ class Denoiser(
             n_register_tokens=config.num_register_tokens,
             hidden_act=config.hidden_act,
             use_flash_attn=config.use_flash_attn,
+            use_rope=config.use_rope,
+            rope_dim_sizes=config.rope_dim_sizes,
+            rope_theta=config.rope_theta,
         )
 
         self.config = config
@@ -813,6 +926,3 @@ class Denoiser(
     @classmethod
     def from_config(cls, config: DenoiserConfig) -> "Denoiser":
         return cls(config)
-
-    def __call__(self, *args, **kwargs):
-        return super().forward(*args, **kwargs)

@@ -47,6 +47,7 @@ def convert_to_comfy_key(key: str) -> str:
 
 
 def convert_from_original_key(key: str) -> str:
+    key = key.replace("diffusion_model.", "denoiser.")
     key = key.replace(DENOISER_TENSOR_PREFIX, "denoiser.")
     key = key.replace(VAE_TENSOR_PREFIX, "vae.")
     key = key.replace(TEXT_ENCODER_TENSOR_PREFIX, "text_encoder.model.")
@@ -54,12 +55,15 @@ def convert_from_original_key(key: str) -> str:
 
 
 class AuraFlowModel(nn.Module):
+    denoiser: Denoiser
+    denoiser_class: type[Denoiser] = Denoiser
+
     def __init__(self, config: AuraFlowConig):
         super().__init__()
 
         self.config = config
 
-        self.denoiser = Denoiser.from_config(config.denoiser)
+        self.denoiser = self.denoiser_class.from_config(config.denoiser)
         vae = VAE.from_config(DEFAULT_VAE_CONFIG)
         assert isinstance(vae, VAE)
         self.vae = vae

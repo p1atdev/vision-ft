@@ -1,6 +1,6 @@
 import torch
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, ValidationInfo
 
 from ...utils.dtype import str_to_dtype
 
@@ -18,7 +18,21 @@ class DenoiserConfig(BaseModel):
     pos_embed_max_size: int = 96 * 96  # 9216
     num_register_tokens: int = 8
     hidden_act: str = "silu"
+
     use_flash_attn: bool = True
+    use_rope: bool = False
+    rope_theta: int = 10000
+    rope_dim_sizes: list[int] = [32, 112, 112]
+
+    @field_validator("rope_dim_sizes", mode="after")
+    def check_rope_dim_sizes(cls, v: list[int], info: ValidationInfo):
+        if info.data["use_rope"] is not True:
+            return v
+        if sum(v) != info.data["attention_head_dim"]:
+            raise ValueError(
+                f"sum of rope_dim_sizes must be attention_head_dim: {info.data['attention_head_dim']}"
+            )
+        return v
 
 
 class AuraFlowConig(BaseModel):

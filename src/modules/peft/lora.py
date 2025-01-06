@@ -16,6 +16,7 @@ class LoRAConfig(PeftConfigMixin):
 
 class LoRALinear(nn.Module):
     adapter_param_names = ["lora_up", "lora_down", "alpha"]
+    adapter_weight_names = ["lora_up.weight", "lora_down.weight", "alpha"]
 
     def __init__(
         self,
@@ -73,3 +74,31 @@ class LoRALinear(nn.Module):
         lora_output = lora_up * (self.alpha / self.rank)
 
         return original_output + lora_output
+
+    @classmethod
+    def from_weights(
+        cls,
+        adapter_weights: dict[str, torch.Tensor],
+        original_linear: nn.Linear,
+    ) -> "LoRALinear":
+        rank = adapter_weights["lora_down.weight"].shape[0]
+        alpha = adapter_weights["alpha"].item()
+
+        config = LoRAConfig(rank=rank, alpha=alpha)
+        module = cls(
+            config,
+            original_linear,
+            original_linear.in_features,
+            original_linear.out_features,
+        )
+        module.lora_down.weight = nn.Parameter(
+            adapter_weights["lora_down.weight"].to(original_linear.weight.device)
+        )
+        module.lora_up.weight = nn.Parameter(
+            adapter_weights["lora_up.weight"].to(original_linear.weight.device)
+        )
+        module.alpha = nn.Parameter(
+            adapter_weights["alpha"].to(original_linear.weight.device)
+        )
+
+        return module
