@@ -15,7 +15,7 @@ from src.modules.loss.timestep import sigmoid_randn
 from src.modules.peft import get_adapter_parameters
 
 
-class AuraFlowForTraining(ModelForTraining, nn.Module):
+class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
     model: AuraFlowModel
 
     model_config: AuraFlowConig
@@ -80,15 +80,16 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
         )
 
         # 4. Calculate the loss
-        v_loss = loss_with_predicted_v(
+        l2_loss = loss_with_predicted_v(
             latents=latents,
             random_noise=random_noise,
             predicted_noise=noise_pred,
         )
+        total_loss = l2_loss
 
-        self.log("train/loss", v_loss, on_step=True, on_epoch=True)
+        self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
-        return v_loss
+        return total_loss
 
     def eval_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         raise NotImplementedError
@@ -112,7 +113,6 @@ class AuraFlowForTraining(ModelForTraining, nn.Module):
     def get_state_dict_to_save(
         self,
     ) -> dict[str, torch.Tensor]:
-        self.model.state_dict()
         if not self._is_peft:
             return self.model.state_dict()
 
@@ -130,7 +130,7 @@ def main(config: str):
         _config,
     )
     trainer.register_dataset_class(TextToImageDatasetConfig)
-    trainer.register_model_class(AuraFlowForTraining)
+    trainer.register_model_class(AuraFlowForTextToImageTraining)
 
     trainer.train()
 

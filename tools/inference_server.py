@@ -1,15 +1,19 @@
 import click
 from PIL import Image
+import yaml
 
 from io import BytesIO
 from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 
 import torch
+from safetensors.torch import load_file
 from accelerate import init_empty_weights
 import litserve as ls
 
-from src.models.auraflow import AuraFlowConig, AuraFlowModel
+from src.config import TrainConfig
+from src.models.auraflow import AuraFlowConig, AuraFlowModel, convert_from_original_key
+from src.modules.peft import load_peft_weight
 
 
 class GenerationParams(BaseModel):
@@ -30,13 +34,28 @@ class GenerationParams(BaseModel):
 class T2IModel:
     def __init__(
         self,
-        checkpoint_path: str,
+        config_path: str,
+        peft_path: str | None,
         device: torch.device | str,
         do_offloading: bool = True,
     ) -> None:
+        with open(config_path, "r") as f:
+            config = TrainConfig(**yaml.safe_load(f))
         with init_empty_weights():
-            model = AuraFlowModel(AuraFlowConig(checkpoint_path=checkpoint_path))
+            model = AuraFlowModel(AuraFlowConig.model_validate(config.model))
+
         model._load_original_weights()
+
+        if peft_path is not None:
+            print(f"Loading PEFT weights from {peft_path}")
+            peft_dict = load_file(peft_path)
+            peft_dict = {convert_from_original_key(k): v for k, v in peft_dict.items()}
+            # print(peft_dict)
+            load_peft_weight(model, peft_dict)
+
+        if not do_offloading:
+            model = model.to(device)
+
         self.model = torch.compile(model, mode="max-autotune", fullgraph=True)
         print(self.model)
 
@@ -64,15 +83,21 @@ class T2IModel:
 
 
 class SimpleLitAPI(ls.LitAPI):
-    def __init__(self, checkpoint_path: str, do_offloading: bool = True):
+    def __init__(
+        self, config_path: str, peft_path: str | None, do_offloading: bool = True
+    ):
         super().__init__()
 
-        self.checkpoint_path = checkpoint_path
+        self.config_path = config_path
+        self.peft_path = peft_path
         self.do_offloading = do_offloading
 
     def setup(self, device):
         self.model = T2IModel(
-            self.checkpoint_path, device, do_offloading=self.do_offloading
+            self.config_path,
+            self.peft_path,
+            device,
+            do_offloading=self.do_offloading,
         )
 
     def decode_request(self, request: dict):
@@ -93,12 +118,13 @@ class SimpleLitAPI(ls.LitAPI):
 
 
 @click.command()
-@click.option("--checkpoint_path", "-C", type=str, required=True)
+@click.option("--config_path", "-C", type=str, required=True)
+@click.option("--peft_path", type=str, default=None)
 @click.option("--do_offloading", type=bool, default=True)
 @click.option("--port", type=int, default=8123)
-def main(checkpoint_path: str, do_offloading: bool, port: int):
+def main(config_path: str, peft_path: str | None, do_offloading: bool, port: int):
     server = ls.LitServer(
-        SimpleLitAPI(checkpoint_path, do_offloading=do_offloading),
+        SimpleLitAPI(config_path, peft_path, do_offloading=do_offloading),
         accelerator="auto",
         max_batch_size=1,
         track_requests=True,
