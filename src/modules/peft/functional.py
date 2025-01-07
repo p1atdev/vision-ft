@@ -1,4 +1,5 @@
 from typing import Callable
+from contextlib import contextmanager
 import warnings
 
 import torch
@@ -167,3 +168,70 @@ def print_trainable_parameters(
     print_fn(
         f"Trainable params: {human_readable_trainable_params}, All params: {human_readable_all_param}, Trainable%: {trainable_params['trainable%']:.4f}%"
     )
+
+
+def set_peft_layer_enabled(model: nn.Module, enabled: bool) -> None:
+    for name, module in model.named_modules():
+        if hasattr(module, "set_enabled"):
+            module.set_enabled(enabled)
+
+
+@contextmanager
+def while_peft_disabled(model: nn.Module):
+    """A context manager that temporarily disables all PEFT layers in a model.
+
+    This decorator temporarily disables all Parameter-Efficient Fine-Tuning (PEFT) layers
+    in the given model while executing the code within its context, and re-enables them
+    afterwards, even if an exception occurs.
+
+    Args:
+        model (nn.Module): The PyTorch model containing PEFT layers to be temporarily disabled.
+
+    Yields:
+        None: A context manager that can be used in a 'with' statement.
+
+    Example:
+        >>> with while_peft_disabled(model):
+        ...     # PEFT layers are disabled here
+        ...     outputs = model(inputs)
+        # PEFT layers are re-enabled here
+
+    Note:
+        This is useful when you want to temporarily bypass PEFT modifications
+        and use the base model's behavior.
+    """
+    try:
+        set_peft_layer_enabled(model, False)
+        yield
+    finally:
+        set_peft_layer_enabled(model, True)
+
+
+@contextmanager
+def while_peft_enabled(model: nn.Module):
+    """
+    A context manager that temporarily enables PEFT (Parameter-Efficient Fine-Tuning) layers in a PyTorch model.
+
+    The PEFT layers are enabled upon entering the context and automatically disabled when exiting,
+    regardless of whether an exception occurred.
+
+    Args:
+        model (nn.Module): The PyTorch model containing PEFT layers to be temporarily enabled.
+
+    Yields:
+        None: A context manager that can be used in a 'with' statement.
+
+    Example:
+        >>> with while_peft_enabled(model):
+        ...     # PEFT layers are enabled here
+        ...     output = model(input)
+        # PEFT layers are automatically disabled after exiting the context
+
+    Note:
+        This ensures PEFT layers are properly disabled even if an exception occurs within the context.
+    """
+    try:
+        set_peft_layer_enabled(model, True)
+        yield
+    finally:
+        set_peft_layer_enabled(model, False)

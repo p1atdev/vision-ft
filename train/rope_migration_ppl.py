@@ -1,5 +1,6 @@
 import click
-from collections import namedtuple
+from contextlib import contextmanager
+
 
 import torch
 import torch.nn as nn
@@ -14,14 +15,14 @@ from src.models.for_training import ModelForTraining
 from src.models.auraflow.denoiser import Denoiser, modulate
 from src.trainer.common import Trainer
 from src.config import TrainConfig
-from src.dataset.text_to_image import TextToImageDatasetConfig
-from src.modules.peft import get_adapter_parameters
+from src.dataset.single_caption_bucket import SingleCaptionDatasetConfig
+from src.modules.peft import (
+    get_adapter_parameters,
+    while_peft_disabled,
+)
 from src.modules.positional_encoding.rope import RoPEFrequency
 from src.modules.loss.timestep import sigmoid_randn
-from src.modules.loss.flow_match import prepare_noised_latents, loss_with_predicted_v
 from src.modules.migration.scale import MigrationScaleFromZero
-
-MigrationOutput = namedtuple("MigrationOutput", ["noise_prediction", "rope_scale"])
 
 
 class DenoiserForRoPEMigration(Denoiser):
@@ -35,7 +36,7 @@ class DenoiserForRoPEMigration(Denoiser):
         latent: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
-    ) -> MigrationOutput:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size, _in_channels, height, width = latent.shape
 
         # 1. condition sequence
@@ -53,27 +54,31 @@ class DenoiserForRoPEMigration(Denoiser):
 
         # 2.5 prepare RoPE migration
         assert isinstance(self.rope_frequency, RoPEFrequency)
-        text_token_indices = self.rope_frequency.get_text_position_indices(
-            cond_tokens.size(1)
-        )
-        image_token_indices = self.rope_frequency.get_image_position_indices(
-            height, width
-        )
-        token_indices = torch.cat([text_token_indices, image_token_indices], dim=0).to(
-            self.device
-        )
-        rope_freqs = self.rope_frequency(token_indices)
+        if self.use_rope:
+            text_token_indices = self.rope_frequency.get_text_position_indices(
+                cond_tokens.size(1)
+            )
+            image_token_indices = self.rope_frequency.get_image_position_indices(
+                height, width
+            )
+            token_indices = torch.cat(
+                [text_token_indices, image_token_indices], dim=0
+            ).to(self.device)
+            rope_freqs = self.rope_frequency(token_indices)
 
-        # get migration scale
-        base_freqs = torch.ones_like(rope_freqs, device=rope_freqs.device)
-        base_freqs[..., 1] = 0  # base_freqs does not rotate
-        difference = base_freqs - rope_freqs
-        rope_freqs = base_freqs - self.migration_scale.scale_positive(difference)
+            # get migration scale
+            base_freqs = torch.ones_like(rope_freqs)
+            base_freqs[..., 1] = 0  # base_freqs does not rotate
+            difference = base_freqs - rope_freqs
+            rope_freqs = base_freqs - self.migration_scale.scale_positive(difference)
 
-        # add scaled position encoding
-        patches = patches + self.migration_scale.scale_negative(
-            self.get_pos_encoding(height, width)
-        )
+            # add scaled position encoding
+            patches = patches + self.migration_scale.scale_negative(
+                self.get_pos_encoding(height, width)
+            )
+        else:
+            rope_freqs = None
+            patches = patches + self.get_pos_encoding(height, width)
 
         # for gradient checkpointing
         def create_custom_forward(module):
@@ -128,7 +133,13 @@ class DenoiserForRoPEMigration(Denoiser):
         noise_prediction = self.unpatchify(
             patches, height // self.patch_size, width // self.patch_size
         )
-        return MigrationOutput(noise_prediction, self.migration_scale.scale)
+        return noise_prediction, self.migration_scale.scale
+
+    @contextmanager
+    def while_rope_disabled(self):
+        self.use_rope = False
+        yield
+        self.use_rope = True
 
 
 class AuraFlorForRoPEMigration(AuraFlowModel):
@@ -183,53 +194,64 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
             assert self.model.denoiser.migration_scale.scale.requires_grad is True
 
     def train_step(self, batch: dict) -> torch.Tensor:
-        pixel_values = batch["image"]
         caption = batch["caption"]
+        height = batch["height"][0]
+        width = batch["width"][0]
 
         # 1. Prepare the inputs
         with torch.no_grad():
             encoder_hidden_states = self.model.text_encoder.encode_prompts(
                 caption
             ).positive_embeddings
-            latents = self.model.encode_image(pixel_values)
+            noise_latents = self.model.prepare_latents(
+                batch_size=encoder_hidden_states.size(0),
+                height=height,
+                width=width,
+                dtype=encoder_hidden_states.dtype,
+                device=self.accelerator.device,
+            )
             timesteps = sigmoid_randn(
-                latents_shape=latents.shape,
+                latents_shape=noise_latents.shape,
                 device=self.accelerator.device,
             )
 
-        # 2. Prepare the noised latents
-        noisy_latents, random_noise = prepare_noised_latents(
-            latents=latents,
-            timestep=timesteps,
-        )
-
         # 3. Predict the noise
-        outputs = self.model.denoiser(
-            latent=noisy_latents,
+        # prior prediction
+        with while_peft_disabled(self.model):
+            with self.model.denoiser.while_rope_disabled():
+                with torch.inference_mode():
+                    prior_preds, _ = self.model.denoiser(
+                        latent=noise_latents,
+                        encoder_hidden_states=encoder_hidden_states,
+                        timestep=timesteps,
+                    )
+
+        # prediction with peft enabled
+        actual_preds, migration_scale = self.model.denoiser(
+            latent=noise_latents,
             encoder_hidden_states=encoder_hidden_states,
             timestep=timesteps,
         )
-        noise_pred = outputs.noise_prediction
-        rope_scale = outputs.rope_scale
 
-        # 4. Calculate the loss
-        l2_loss = loss_with_predicted_v(
-            latents=latents,
-            random_noise=random_noise,
-            predicted_noise=noise_pred,
+        # 4. Calculate loss
+        # Prior preservation loss (ppl)
+        ppl_loss = F.mse_loss(
+            prior_preds.detach(),
+            actual_preds,  # calculate the loss only this one
+            reduction="mean",
         )
         # want the scale to be 1
         rope_migration_loss = F.mse_loss(
-            rope_scale,
-            torch.ones_like(rope_scale),
+            migration_scale,
+            torch.ones_like(migration_scale),
             reduction="mean",
         )
-        total_loss = l2_loss + rope_migration_loss
+        total_loss = ppl_loss + rope_migration_loss
 
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
         self.log(
-            "train/l2_loss",
-            l2_loss,
+            "train/ppl_loss",
+            ppl_loss,
             on_step=True,
             on_epoch=True,
         )
@@ -285,7 +307,7 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_dataset_class(TextToImageDatasetConfig)
+    trainer.register_dataset_class(SingleCaptionDatasetConfig)
     trainer.register_model_class(AuraFlowForRoPEMigrationTraining)
 
     trainer.train()

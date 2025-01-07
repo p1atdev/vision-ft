@@ -5,6 +5,8 @@ from .functional import (
     get_adapter_parameters,
     print_trainable_parameters,
     load_peft_weight,
+    while_peft_disabled,
+    while_peft_enabled,
 )
 
 PeftConfigUnion = LoRAConfig
