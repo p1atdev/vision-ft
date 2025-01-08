@@ -10,8 +10,11 @@ from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
 from src.dataset.text_to_image import TextToImageDatasetConfig
-from src.modules.loss.flow_match import prepare_noised_latents, loss_with_predicted_v
-from src.modules.loss.timestep import sigmoid_randn
+from src.modules.loss.flow_match import (
+    prepare_noised_latents,
+    loss_with_predicted_velocity,
+)
+from src.modules.timestep import sigmoid_randn
 from src.modules.peft import get_adapter_parameters
 
 
@@ -80,7 +83,7 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         )
 
         # 4. Calculate the loss
-        l2_loss = loss_with_predicted_v(
+        l2_loss = loss_with_predicted_velocity(
             latents=latents,
             random_noise=random_noise,
             predicted_noise=noise_pred,

@@ -5,7 +5,7 @@ from accelerate import init_empty_weights, Accelerator
 from safetensors.torch import save_file
 
 from src.modules.peft import (
-    replace_to_peft_linear,
+    replace_to_peft_layer,
     LoRAConfig,
     LoRALinear,
     get_adapter_parameters,
@@ -61,7 +61,7 @@ def test_replace_lora_linear():
     inputs = torch.randn(1, 10, dtype=torch.float16)
     original_output = model(inputs)
 
-    replace_to_peft_linear(
+    replace_to_peft_layer(
         model,
         config,
     )
@@ -130,7 +130,7 @@ def test_save_lora_weight():
         ],  # exclude text encoder, vae, time embedder, final linear
     )
 
-    replace_to_peft_linear(
+    replace_to_peft_layer(
         model,
         config,
     )

@@ -44,8 +44,8 @@ def flux_shift_randn(
 ):
     batch_size, _channels, height, width = latents_shape
 
-    logits_norm = torch.randn(batch_size, device=device)
-    logits_norm = logits_norm * sigmoid_scale  # larger scale for more uniform sampling
+    norm_rand = torch.randn(batch_size, device=device)
+    logits_norm = norm_rand * sigmoid_scale  # larger scale for more uniform sampling
     timesteps = logits_norm.sigmoid()
     mu = get_lin_function(y1=0.5, y2=1.15)((height // 2) * (width // 2))
 
@@ -64,8 +64,8 @@ def shift_sigmoid_randn(
     batch_size, _channels, _height, _width = latents_shape
     shift = discrete_flow_shift
 
-    logits_norm = torch.randn(batch_size, device=device)
-    logits_norm = logits_norm * sigmoid_scale  # larger scale for more uniform sampling
+    norm_rand = torch.randn(batch_size, device=device)
+    logits_norm = norm_rand * sigmoid_scale  # larger scale for more uniform sampling
     timesteps = logits_norm.sigmoid()
 
     timesteps = (timesteps * shift) / (1 + (shift - 1) * timesteps)
@@ -80,8 +80,8 @@ def sigmoid_randn(
 ):
     batch_size, _channels, _height, _width = latents_shape
 
-    logits_norm = torch.randn(batch_size, device=device)
-    logits_norm = logits_norm * sigmoid_scale  # larger scale for more uniform sampling
+    norm_rand = torch.randn(batch_size, device=device)
+    logits_norm = norm_rand * sigmoid_scale  # larger scale for more uniform sampling
     timesteps = logits_norm.sigmoid()
 
     return timesteps

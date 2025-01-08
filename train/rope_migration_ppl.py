@@ -21,7 +21,7 @@ from src.modules.peft import (
     while_peft_disabled,
 )
 from src.modules.positional_encoding.rope import RoPEFrequency
-from src.modules.loss.timestep import sigmoid_randn
+from src.modules.timestep import sigmoid_randn
 from src.modules.migration.scale import MigrationScaleFromZero
 
 

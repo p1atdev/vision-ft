@@ -68,8 +68,6 @@ class TrainerConfig(BaseModel):
 class TrainConfig(BaseModel):
     model: dict | BaseModel
     dataset: dict | BaseModel
-    # TODO: loss config
-    # loss: dict | BaseModel
     peft: PeftConfigUnion | None = None
 
     optimizer: OptimizerConfig = OptimizerConfig()

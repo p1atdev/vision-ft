@@ -16,7 +16,7 @@ from ..utils.logging import get_trackers
 from ..models.for_training import ModelForTraining
 from ..modules.peft import (
     PeftConfigMixin,
-    replace_to_peft_linear,
+    replace_to_peft_layer,
     print_trainable_parameters,
 )
 
@@ -111,7 +111,7 @@ class Trainer:
         if self.peft_config is not None:
             self.print("Applying PEFT")
             self.model._set_is_peft(True)
-            replace_to_peft_linear(
+            replace_to_peft_layer(
                 self.model,
                 self.peft_config,
             )
