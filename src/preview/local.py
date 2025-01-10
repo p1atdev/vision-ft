@@ -14,7 +14,7 @@ class LocalPreviewCallback(PreviewCallback):
         epoch: int,
         steps: int,
         id: str | int,
-        # metadata: dict | None = None,
+        metadata: dict | None = None,
     ):
         image_path = self.save_dir / self.format_template(
             epoch=epoch,

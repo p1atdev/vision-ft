@@ -307,7 +307,7 @@ class Trainer:
                     self.model.before_preview_step()
                     preview = self.model.preview_step(batch, preview_index=i)
                     for callback in self.preview_callbacks:
-                        callback.preview_image(preview, epoch, steps, i)
+                        callback.preview_image(preview, epoch, steps, i, metadata=batch)
                     self.model.after_preview_step()
 
                 self.print("Preview done.")

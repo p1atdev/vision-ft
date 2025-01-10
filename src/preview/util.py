@@ -164,5 +164,6 @@ class PreviewCallback(ABC):
         epoch: int,
         steps: int,
         id: str | int,
+        metadata: dict | None = None,
     ):
         pass
