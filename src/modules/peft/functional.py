@@ -1,5 +1,6 @@
-from typing import Callable
+from typing import Callable, NamedTuple
 from contextlib import contextmanager
+import warnings
 
 import torch
 from torch import nn
@@ -153,10 +154,16 @@ def load_peft_weight(model: nn.Module, state_dict: dict[str, torch.Tensor]) -> N
     _load_peft_weight(model, state_dict, peft_type)
 
 
+class TrainableParameters(NamedTuple):
+    trainable_params: int
+    all_param: int
+    trainable_percent: float
+
+
 # ref: https://github.com/huggingface/peft/blob/6d458b300fc2ed82e19f796b53af4c97d03ea604/examples/fp4_finetuning/finetune_fp4_opt_bnb_peft.py#L92-L104
 def calculate_trainable_parameters(
     model: nn.Module,
-):
+) -> TrainableParameters:
     trainable_params = 0
     all_param = 0
 
@@ -165,11 +172,11 @@ def calculate_trainable_parameters(
         if param.requires_grad:
             trainable_params += param.numel()
 
-    return {
-        "trainable_params": trainable_params,
-        "all_param": all_param,
-        "trainable%": 100 * trainable_params / all_param,
-    }
+    return TrainableParameters(
+        trainable_params=trainable_params,
+        all_param=all_param,
+        trainable_percent=100 * trainable_params / all_param,
+    )
 
 
 def human_readable_param(
@@ -193,15 +200,18 @@ def print_trainable_parameters(
     model: nn.Module,
     print_fn: Callable = print,
 ):
-    trainable_params = calculate_trainable_parameters(model)
-    human_readable_trainable_params = human_readable_param(
-        trainable_params["trainable_params"]
+    trainable_params, all_param, trainable_percent = calculate_trainable_parameters(
+        model
     )
-    human_readable_all_param = human_readable_param(trainable_params["all_param"])
+    human_readable_trainable_params = human_readable_param(trainable_params)
+    human_readable_all_param = human_readable_param(all_param)
 
     print_fn(
-        f"Trainable params: {human_readable_trainable_params}, All params: {human_readable_all_param}, Trainable%: {trainable_params['trainable%']:.4f}%"
+        f"Trainable params: {human_readable_trainable_params}, All params: {human_readable_all_param}, Trainable%: {trainable_percent:.4f}%"
     )
+    if trainable_params == 0:
+        warnings.warn("!!!!!No trainable parameters found!!!!!")
+        warnings.warn("!!!!!If this is not intended, check your peft config!!!!!")
 
 
 def set_peft_layer_enabled(model: nn.Module, enabled: bool) -> None:
