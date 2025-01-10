@@ -48,6 +48,23 @@ def get_dataloader_for_bucketing(
     )
 
 
+def get_dataloader_for_preview(
+    dataset: data.Dataset,
+    num_workers: int = 0,
+    drop_last: bool = False,
+    generator: torch.Generator | None = None,
+) -> data.DataLoader:
+    return data.DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        drop_last=drop_last,
+        generator=generator,
+        collate_fn=preview_batch_collate_fn,
+    )
+
+
 def concatnate_collate_fn(
     batch: Iterable[dict[str, tuple[torch.Tensor, Iterable]]],
 ) -> dict:
@@ -67,4 +84,25 @@ def concatnate_collate_fn(
             new_batch[key] = torch.cat(value, dim=0)
         else:
             new_batch[key] = sum(value, [])
+    return new_batch
+
+
+def preview_batch_collate_fn(
+    batch: Iterable[dict[str, tuple[torch.Tensor, Iterable]]],
+) -> dict:
+    """
+    Make flat batch for preview.
+    """
+    # list[dict[str, list]] -> dict[str, item]
+
+    result = defaultdict(list)
+    for d in batch:
+        for key, value in d.items():
+            result[key].append(value)
+
+    new_batch = {}
+    for key, value in result.items():
+        assert len(value) == 1, "Preview batch size must be 1"
+        new_batch[key] = value[0]
+
     return new_batch

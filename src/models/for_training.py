@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-
+from PIL import Image
 
 import torch
 import torch.nn as nn
@@ -158,6 +158,33 @@ class ModelForTraining(ABC, nn.Module):
         pass
 
     def after_save_model(self):
+        pass
+
+    def before_preview(self):
+        pass
+
+    def before_preview_step(
+        self,
+    ):
+        pass
+
+    @abstractmethod
+    def preview_step(
+        self,
+        batch,
+        preview_index: int,
+    ) -> Image.Image:
+        """
+        e.g.) generate sample images for checking the training progress
+        """
+        pass
+
+    def after_preview_step(
+        self,
+    ):
+        pass
+
+    def after_preview(self):
         pass
 
     def print(self, *args, **kwargs):

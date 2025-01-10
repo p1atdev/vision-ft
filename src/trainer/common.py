@@ -10,14 +10,17 @@ from transformers import set_seed
 
 from ..config import TrainConfig, DEBUG_MODE_TYPE
 from ..saving import ModelSavingStrategy, get_saving_callback
+from ..preview import PreviewStrategy, get_preview_callback
 from ..dataset.util import DatasetConfig
-from ..dataloader import get_dataloader_for_bucketing
+from ..dataloader import get_dataloader_for_bucketing, get_dataloader_for_preview
 from ..utils.logging import get_trackers
+from ..utils.safetensors import load_file_with_rename_key_map
 from ..models.for_training import ModelForTraining
 from ..modules.peft import (
     PeftConfigMixin,
     replace_to_peft_layer,
     print_trainable_parameters,
+    load_peft_weight,
 )
 
 
@@ -27,10 +30,11 @@ class Trainer:
     peft_config: PeftConfigMixin | None
 
     dataset_config: DatasetConfig
-    dataset_config_class: type[DatasetConfig]
+    preview_dataset_config: DatasetConfig | None
 
     train_dataloader: data.DataLoader
     eval_dataloader: data.DataLoader | None = None
+    preview_dataloader: data.DataLoader | None = None
 
     debug_mode: DEBUG_MODE_TYPE
 
@@ -58,11 +62,18 @@ class Trainer:
         self.model_cls = model_cls
         self.model = model_cls(self.accelerator, self.config, *args, **kwargs)
 
-    def register_dataset_class(
+    def register_train_dataset_class(
         self, dataset_config_class: type[DatasetConfig], *args, **kwargs
     ):
-        self.dataset_config_class = dataset_config_class
         self.dataset_config = dataset_config_class.model_validate(self.config.dataset)
+
+    def register_preview_dataset_class(
+        self, dataset_config_class: type[DatasetConfig], *args, **kwargs
+    ):
+        if self.config.preview is not None:
+            self.preview_dataset_config = dataset_config_class.model_validate(
+                self.config.preview.data
+            )
 
     def get_saving_callbacks(self):
         if (saving := self.config.saving) is not None:
@@ -73,6 +84,15 @@ class Trainer:
         self.accelerator.print("No saving config. Model will not be saved.")
         return []
 
+    def get_preview_callbacks(self):
+        if (preview := self.config.preview) is not None:
+            if len(preview.callbacks) == 0:
+                warnings.warn("No preview callbacks found in the config")
+            return [get_preview_callback(callback) for callback in preview.callbacks]
+
+        self.accelerator.print("No preview config. Model will not be saved.")
+        return []
+
     def prepare_dataloaders(self):
         train_ds = self.dataset_config.get_dataset()
 
@@ -81,14 +101,23 @@ class Trainer:
             shuffle=self.dataset_config.shuffle,
             num_workers=self.dataset_config.num_workers,
         )
-        # TODO: eval, generation check
+        self.train_dataloader = self.accelerator.prepare_data_loader(train_dataloader)
+        # TODO: eval
         # eval_dataloader = get_dataloader(
         #     eval_ds,
         #     batch_size=self.dataset_config.batch_size,
         #     shuffle=False,
         #     num_workers=self.dataset_config.num_workers,
         # )
-        self.train_dataloader = self.accelerator.prepare_data_loader(train_dataloader)
+        if (preview_config := self.config.preview) is not None:
+            self.print("Preview config found. Preparing preview dataloader...")
+            preview_dataloader = get_dataloader_for_preview(
+                preview_config.data.get_dataset(),
+                # TODO: other args
+            )
+            self.preview_dataloader = self.accelerator.prepare_data_loader(
+                preview_dataloader
+            )
 
     def prepare_saving_strategy(self):
         if (saving := self.config.saving) is not None:
@@ -107,6 +136,22 @@ class Trainer:
             )
         self.saving_callbacks = self.get_saving_callbacks()
 
+    def prepare_preview_strategy(self):
+        if (preview := self.config.preview) is not None:
+            self.preview_strategy = PreviewStrategy.from_config(
+                config=preview.strategy,
+                steps_per_epoch=len(self.train_dataloader),
+                total_epochs=self.config.num_train_epochs,
+            )
+        else:
+            self.preview_strategy = PreviewStrategy(
+                steps_per_epoch=len(self.train_dataloader),
+                total_epochs=self.config.num_train_epochs,
+                per_epochs=None,
+                per_steps=None,
+            )
+        self.preview_callbacks = self.get_preview_callbacks()
+
     def setup_peft_if_needed(self):
         if self.peft_config is not None:
             self.print("Applying PEFT")
@@ -115,6 +160,13 @@ class Trainer:
                 self.model,
                 self.peft_config,
             )
+            if (weight_path := self.peft_config.resume_weight_path) is not None:
+                load_peft_weight(
+                    self.model,
+                    load_file_with_rename_key_map(
+                        weight_path, self.peft_config.resume_rename_key_map
+                    ),
+                )
             print_trainable_parameters(self.model, self.print)
         else:
             self.model._set_is_peft(False)
@@ -143,6 +195,9 @@ class Trainer:
 
         self.print("Setting up saving strategy")
         self.prepare_saving_strategy()
+
+        self.print("Setting up preview strategy")
+        self.prepare_preview_strategy()
 
         if self.debug_mode == "dataset":
             self.debug_dataset()
@@ -179,10 +234,12 @@ class Trainer:
                     self.model.backward(loss)
                     pbar.set_postfix({"loss": loss.item()})
 
-                    self.model.after_train_step()
                     pbar.update(1)
 
                     self.call_saving_callbacks(epoch, current_step)
+                    self.call_preview_callbacks(epoch, current_step)
+
+                    self.model.after_train_step()
 
                     if self.debug_mode == "1step":
                         break
@@ -203,8 +260,9 @@ class Trainer:
                             loss = self.model.eval_step(batch)
                         pbar.set_postfix({"loss": loss.item()})
 
-                        self.model.after_eval_step()
                         pbar.update(1)
+
+                        self.model.after_eval_step()
 
                         if self.debug_mode == "1step":
                             break
@@ -232,8 +290,30 @@ class Trainer:
                     self.print("Model saved.")
 
             self.accelerator.wait_for_everyone()
-
             self.model.after_save_model()
+
+    def call_preview_callbacks(self, epoch: int, steps: int):
+        if self.preview_strategy.should_preview(epoch, steps):
+            self.model.before_preview()
+
+            if len(self.preview_callbacks) > 0:
+                assert self.preview_dataloader is not None
+                self.print("Generating preview images...")
+                for i, batch in tqdm(
+                    enumerate(self.preview_dataloader),
+                    total=len(self.preview_dataloader),
+                    desc="Preview",
+                ):
+                    self.model.before_preview_step()
+                    preview = self.model.preview_step(batch, preview_index=i)
+                    for callback in self.preview_callbacks:
+                        callback.preview_image(preview, epoch, steps, i)
+                    self.model.after_preview_step()
+
+                self.print("Preview done.")
+
+            self.accelerator.wait_for_everyone()
+            self.model.after_preview()
 
     def debug_dataset(self):
         if self.train_dataloader is None:

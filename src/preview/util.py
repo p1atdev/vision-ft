@@ -1,22 +1,17 @@
 from pathlib import Path
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-
-import torch
-import torch.nn as nn
+from PIL import Image
 
 
-class ModelSavingStrategyConfig(BaseModel):
+class PreviewStrategyConfig(BaseModel):
     per_epochs: int | float | None = 1
     per_steps: int | None = None
-    save_last: bool = True
 
 
-class ModelSavingStrategy:
+class PreviewStrategy:
     per_epochs: int | float | None = None
     per_steps: int | None = None
-    # TODO: save_last is not used
-    save_last: bool = True
 
     _total_epochs: int
     _steps_per_epoch: int
@@ -27,11 +22,9 @@ class ModelSavingStrategy:
         steps_per_epoch: int,
         per_epochs: int | float | None,
         per_steps: int | None,
-        save_last: bool,
     ):
         self.per_epochs = per_epochs
         self.per_steps = per_steps
-        self.save_last = save_last
 
         self._total_epochs = total_epochs
         self._steps_per_epoch = steps_per_epoch
@@ -40,8 +33,8 @@ class ModelSavingStrategy:
 
     @classmethod
     def from_config(
-        cls, config: ModelSavingStrategyConfig, total_epochs: int, steps_per_epoch: int
-    ) -> "ModelSavingStrategy":
+        cls, config: PreviewStrategyConfig, total_epochs: int, steps_per_epoch: int
+    ) -> "PreviewStrategy":
         return cls(
             total_epochs=total_epochs,
             steps_per_epoch=steps_per_epoch,
@@ -105,7 +98,7 @@ class ModelSavingStrategy:
 
         return self.per_steps
 
-    def should_save(self, epoch: int, steps: int) -> bool:
+    def should_preview(self, epoch: int, steps: int) -> bool:
         # saving is disabled
         if self._steps_per_epoch is None and self._total_epochs is None:
             return False
@@ -113,8 +106,8 @@ class ModelSavingStrategy:
         if epoch == 0 and steps == 0:
             return False  # skip the first step
 
-        if self.per_epochs is not None and epoch != 0:
-            if steps % (self._steps_per_epoch * self.per_epochs) == 0:
+        if self._per_epochs is not None and epoch != 0:
+            if steps % (self._steps_per_epoch * self._per_epochs) == 0:
                 return True
 
         if self._per_steps is not None and steps != 0:
@@ -124,27 +117,23 @@ class ModelSavingStrategy:
         return False
 
 
-class ModelSavingCallbackConfig(BaseModel):
+class PreviewCallbackConfig(BaseModel):
     type: str
 
-    name: str
     save_dir: str | Path
 
 
-class ModelSavingCallback(ABC):
-    save_name_template: str = "{name}_{epoch:05}e_{steps:06}s.safetensors"
-    name: str
+class PreviewCallback(ABC):
+    save_name_template: str = "{epoch:05}e_{steps:06}s_{id:03}.webp"
     _save_dir: Path
 
     def __init__(
         self,
-        name: str,
         save_dir: str | Path,
         save_name_template: str | None = None,
     ) -> None:
         super().__init__()
 
-        self.name = name
         self._save_dir = save_dir if isinstance(save_dir, Path) else Path(save_dir)
         if save_name_template is not None:
             self.save_name_template = save_name_template
@@ -152,9 +141,7 @@ class ModelSavingCallback(ABC):
         self.sanity_check()
 
     @classmethod
-    def from_config(
-        cls, config: ModelSavingCallbackConfig, **kwargs
-    ) -> "ModelSavingCallback":
+    def from_config(cls, config: PreviewCallbackConfig, **kwargs) -> "PreviewCallback":
         config_dict = config.model_dump()
         config_dict.pop("type")
 
@@ -171,17 +158,11 @@ class ModelSavingCallback(ABC):
         return self._save_dir
 
     @abstractmethod
-    def save(
-        self, model: nn.Module, epoch: int, steps: int, metadata: dict | None = None
-    ):
-        pass
-
-    @abstractmethod
-    def save_state_dict(
+    def preview_image(
         self,
-        state_dict: dict[str, torch.Tensor],
+        image: Image.Image,
         epoch: int,
         steps: int,
-        metadata: dict | None = None,
+        id: str | int,
     ):
         pass

@@ -6,11 +6,17 @@ from pathlib import Path
 from pydantic import BaseModel, field_validator
 
 from .saving import (
-    HFHubSavingCallbackConfig,
+    ModelSavingCallbackConfgiAlias,
     SafetensorsSavingCallbackConfig,
     ModelSavingStrategyConfig,
 )
+from .preview import (
+    PreviewCallbackConfigAlias,
+    PreviewStrategyConfig,
+    LocalPreviewCallbackConfig,
+)
 from .modules.peft import PeftConfigUnion
+from .dataset import PreviewDatasetAlias
 
 
 class OptimizerConfig(BaseModel):
@@ -27,9 +33,20 @@ class SchedulerConfig(BaseModel):
 
 class SavingConfig(BaseModel):
     strategy: ModelSavingStrategyConfig = ModelSavingStrategyConfig()
-    callbacks: list[SafetensorsSavingCallbackConfig | HFHubSavingCallbackConfig] = [
+    callbacks: list[ModelSavingCallbackConfgiAlias] = [
         SafetensorsSavingCallbackConfig(name="model", save_dir="./output")
     ]
+
+    rename_key_map: dict[str, str] = {}
+
+
+class PreviewConfig(BaseModel):
+    strategy: PreviewStrategyConfig = PreviewStrategyConfig()
+    callbacks: list[PreviewCallbackConfigAlias] = [
+        LocalPreviewCallbackConfig(save_dir="./output/preview")
+    ]
+
+    data: PreviewDatasetAlias
 
 
 class TrackerConfig(BaseModel):
@@ -73,6 +90,7 @@ class TrainConfig(BaseModel):
     optimizer: OptimizerConfig = OptimizerConfig()
     scheduler: SchedulerConfig | None = None
     saving: SavingConfig | None = SavingConfig()
+    preview: PreviewConfig | None = None
     tracker: TrackerConfig | None = None
     trainer: TrainerConfig = TrainerConfig()
 

@@ -259,8 +259,6 @@ class SingleAttention(nn.Module):
         if self.use_rope is not None:
             if isinstance(rope_freqs, torch.Tensor):
                 q, k = apply_rope_qk(q, k, rope_freqs)
-            else:
-                warnings.warn("use_rope is specified but rope_freqs is not provided")
 
         # 2. attention
         output = scaled_qkv_attention(
@@ -374,8 +372,6 @@ class DoubleAttention(nn.Module):
         if self.use_rope is not None:
             if isinstance(rope_freqs, torch.Tensor):
                 q, k = apply_rope_qk(q, k, rope_freqs)
-            else:
-                warnings.warn("use_rope is specified but rope_freqs is not provided")
 
         # 2. attention
         output = scaled_qkv_attention(

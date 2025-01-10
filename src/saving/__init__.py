@@ -7,6 +7,10 @@ from .util import (
     ModelSavingStrategyConfig,
 )
 
+ModelSavingCallbackConfgiAlias = (
+    SafetensorsSavingCallbackConfig | HFHubSavingCallbackConfig
+)
+
 
 def get_saving_callback(
     config: ModelSavingCallbackConfig,

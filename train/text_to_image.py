@@ -1,3 +1,4 @@
+from PIL.Image import Image
 import click
 
 import torch
@@ -10,12 +11,14 @@ from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
 from src.dataset.text_to_image import TextToImageDatasetConfig
+from src.dataset.preview.text_to_image import TextToImagePreviewConfig
 from src.modules.loss.flow_match import (
     prepare_noised_latents,
     loss_with_predicted_velocity,
 )
 from src.modules.timestep import sigmoid_randn
 from src.modules.peft import get_adapter_parameters
+from src.utils.logging import wandb_image
 
 
 class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
@@ -28,6 +31,10 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         if self.accelerator.is_main_process:
             with init_empty_weights():
                 self.model = AuraFlowModel(self.model_config)
+
+                # freeze other modules
+                self.model.text_encoder.eval()
+                self.model.vae.eval()  # type: ignore
 
             self.model._load_original_weights()
 
@@ -97,8 +104,38 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
     def eval_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         raise NotImplementedError
 
-    def before_setup_model(self):
-        super().before_setup_model()
+    @torch.inference_mode()
+    def preview_step(self, batch, preview_index: int) -> Image:
+        prompt: str = batch["prompt"]
+        negative_prompt: str | None = batch["negative_prompt"]
+        height: int = batch["height"]
+        width: int = batch["width"]
+        cfg_scale: float = batch["cfg_scale"]
+        num_steps: int = batch["num_steps"]
+        seed: int = batch["seed"]
+
+        if negative_prompt is None and cfg_scale > 0:
+            negative_prompt = ""
+
+        with self.accelerator.autocast():
+            image = self.model.generate(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                cfg_scale=cfg_scale,
+                num_inference_steps=num_steps,
+                seed=seed,
+            )[0]
+
+        self.log(
+            f"preview/image_{preview_index}",
+            wandb_image(image, caption=prompt),
+            on_step=True,
+            on_epoch=False,
+        )
+
+        return image
 
     def after_setup_model(self):
         if self.accelerator.is_main_process:
@@ -106,12 +143,6 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
                 self.model.denoiser._set_gradient_checkpointing(True)
 
         super().after_setup_model()
-
-    def before_eval_step(self):
-        super().before_eval_step()
-
-    def before_backward(self):
-        super().before_backward()
 
     def get_state_dict_to_save(
         self,
@@ -123,6 +154,15 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         state_dict = {convert_to_comfy_key(k): v for k, v in state_dict.items()}
         return state_dict
 
+    def before_setup_model(self):
+        pass
+
+    def before_eval_step(self):
+        pass
+
+    def before_backward(self):
+        pass
+
 
 @click.command()
 @click.option("--config", type=str, required=True)
@@ -132,7 +172,8 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_dataset_class(TextToImageDatasetConfig)
+    trainer.register_train_dataset_class(TextToImageDatasetConfig)
+    trainer.register_preview_dataset_class(TextToImagePreviewConfig)
     trainer.register_model_class(AuraFlowForTextToImageTraining)
 
     trainer.train()

@@ -145,7 +145,7 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_dataset_class(TextToImageDatasetConfig)
+    trainer.register_train_dataset_class(TextToImageDatasetConfig)
     trainer.register_model_class(AuraFlowForRoPESwitchTraining)
 
     trainer.train()

@@ -204,6 +204,9 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
             ), "This model is not for positional attention training"
             with init_empty_weights():
                 self.model = AuraFlorForRoPEMigration(self.model_config)
+                # freeze other modules
+                self.model.text_encoder.eval()
+                self.model.vae.eval()  # type: ignore
 
             self.model._load_original_weights()
             assert self.model.denoiser.migration_scale.scale.requires_grad is True
@@ -326,7 +329,7 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_dataset_class(TextToImageDatasetConfig)
+    trainer.register_train_dataset_class(TextToImageDatasetConfig)
     trainer.register_model_class(AuraFlowForRoPEMigrationTraining)
 
     trainer.train()

@@ -15,8 +15,12 @@ peft:
 
   dtype: bfloat16
 
-  include_keys: [".attn.", ".mlp.", ".modC.", ".modC.", ".modX."]
-  exclude_keys: ["text_encoder", "vae", "t_embedder", "final_linear"]
+  include_keys:
+    - "attn.w2"
+    - regex: .*single_layers\.\d+\.w1[qkvo]
+    - ".mlp."
+    - ".mlpX."
+  exclude_keys: ["text_encoder", "vae", "t_embedder", "final_linear", ".mod"]
 
 dataset:
   folder: "data/sfw_0.1k/images"
@@ -53,6 +57,18 @@ saving:
     - type: "safentensors" # or "hf_hub" to push to hub
       name: "test-lora"
       save_dir: "./output/lora"
+
+preview:
+  strategy:
+    per_epochs: 1
+    per_steps: 10
+
+  callbacks:
+    - type: "local"
+      save_dir: "./output/lora/preview"
+
+  data:
+    path: "./configs/preview.yml"
 
 seed: 42
 num_train_epochs: 10
