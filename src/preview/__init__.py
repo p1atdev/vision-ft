@@ -14,7 +14,7 @@ PreviewCallbackConfigAlias = (
 
 
 def get_preview_callback(
-    config: PreviewCallbackConfig,
+    config: PreviewCallbackConfigAlias,
     **kwargs,
 ) -> PreviewCallback:
     if isinstance(config, LocalPreviewCallbackConfig):

@@ -105,7 +105,7 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         raise NotImplementedError
 
     @torch.inference_mode()
-    def preview_step(self, batch, preview_index: int) -> Image:
+    def preview_step(self, batch, preview_index: int) -> list[Image]:
         prompt: str = batch["prompt"]
         negative_prompt: str | None = batch["negative_prompt"]
         height: int = batch["height"]
@@ -135,7 +135,7 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
             on_epoch=False,
         )
 
-        return image
+        return [image]
 
     def after_setup_model(self):
         if self.accelerator.is_main_process:

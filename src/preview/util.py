@@ -160,7 +160,7 @@ class PreviewCallback(ABC):
     @abstractmethod
     def preview_image(
         self,
-        image: Image.Image,
+        images: list[Image.Image],
         epoch: int,
         steps: int,
         id: str | int,

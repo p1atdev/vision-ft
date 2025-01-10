@@ -1,6 +1,6 @@
 from PIL import Image
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 import requests
 from io import BytesIO
 
@@ -9,7 +9,7 @@ from .util import PreviewCallback
 
 class DiscordWebhookPreviewCallbackConfig(BaseModel):
     type: Literal["discord"] = "discord"
-    url: str
+    url: SecretStr
 
     username: str | None = None
     avatar_url: str | None = None
@@ -23,17 +23,20 @@ class DiscordWebhookPreviewCallbackConfig(BaseModel):
 class DiscordWebhookPreviewCallback(PreviewCallback):
     def __init__(
         self,
-        url: str,
-        message_template: str,
-        username: str | None = None,
-        avatar_url: str | None = None,
+        config: DiscordWebhookPreviewCallbackConfig,
     ) -> None:
-        self.url = url
-        self.message_template = message_template
-        self.username = username
-        self.avatar_url = avatar_url
+        self.url = config.url.get_secret_value()
+        self.message_template = config.message_template
+        self.username = config.username
+        self.avatar_url = config.avatar_url
 
         self.sanity_check()
+
+    @classmethod
+    def from_config(
+        cls, config: DiscordWebhookPreviewCallbackConfig, **kwargs
+    ) -> "PreviewCallback":
+        return cls(config, **kwargs)
 
     def format_message(self, epoch: int, steps: int, id: str | int) -> str:
         return self.message_template.format(epoch=epoch, steps=steps, id=id)
@@ -58,18 +61,20 @@ class DiscordWebhookPreviewCallback(PreviewCallback):
 
         return body
 
-    def prepare_files(self, image: Image.Image) -> dict:
-        file = BytesIO()
-        image.save(file, format="webp")
-        file.seek(0)
+    def prepare_files(self, images: list[Image.Image]) -> dict:
+        files = {}
+        for i, image in enumerate(images):
+            file = BytesIO()
+            image.save(file, format="webp")
+            file.seek(0)
 
-        return {
-            "file": (
-                "preview.webp",
+            files[f"file{i}"] = (
+                f"preview_{i}.webp",
                 file,
                 "image/webp",
-            ),
-        }
+            )
+
+        return files
 
     def get_caption(self, metadata: dict) -> str | None:
         if "caption" in metadata:
@@ -82,7 +87,7 @@ class DiscordWebhookPreviewCallback(PreviewCallback):
 
     def preview_image(
         self,
-        image: Image.Image,
+        images: list[Image.Image],
         epoch: int,
         steps: int,
         id: str | int,
@@ -90,7 +95,7 @@ class DiscordWebhookPreviewCallback(PreviewCallback):
     ):
         metadata = metadata or {}
         body = self.compose_body(epoch, steps, id, caption=self.get_caption(metadata))
-        files = self.prepare_files(image)
+        files = self.prepare_files(images)
 
         response = requests.post(self.url, data=body, files=files)
         response.raise_for_status()

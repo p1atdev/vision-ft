@@ -1,5 +1,5 @@
 import click
-from typing import NamedTuple
+from PIL import Image
 from contextlib import contextmanager
 
 import torch
@@ -24,11 +24,7 @@ from src.modules.loss.flow_match import (
     loss_with_predicted_velocity,
 )
 from src.modules.migration.scale import MigrationScaleFromZero
-
-
-class MigrationOutput(NamedTuple):
-    noise_prediction: torch.Tensor
-    rope_scale: torch.Tensor
+from src.utils.logging import wandb_image
 
 
 class DenoiserForRoPEMigration(Denoiser):
@@ -36,13 +32,14 @@ class DenoiserForRoPEMigration(Denoiser):
         super().__init__(config)
 
         self.migration_scale = MigrationScaleFromZero(dim=1)
+        self.migration = True
 
     def forward(
         self,
         latent: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
-    ) -> MigrationOutput:
+    ) -> torch.Tensor:
         batch_size, _in_channels, height, width = latent.shape
 
         # 1. condition sequence
@@ -73,16 +70,19 @@ class DenoiserForRoPEMigration(Denoiser):
             ).to(self.device)
             rope_freqs = self.rope_frequency(token_indices)
 
-            # get migration scale
-            base_freqs = torch.ones_like(rope_freqs, device=rope_freqs.device)
-            base_freqs[..., 1] = 0  # base_freqs does not rotate
-            difference = base_freqs - rope_freqs
-            rope_freqs = base_freqs - self.migration_scale.scale_positive(difference)
+            if self.migration:
+                # get migration scale
+                base_freqs = torch.ones_like(rope_freqs, device=rope_freqs.device)
+                base_freqs[..., 1] = 0  # base_freqs does not rotate
+                difference = base_freqs - rope_freqs
+                rope_freqs = base_freqs - self.migration_scale.scale_positive(
+                    difference
+                )
 
-            # add scaled position encoding
-            patches = patches + self.migration_scale.scale_negative(
-                self.get_pos_encoding(height, width)
-            )
+                # add scaled position encoding
+                patches = patches + self.migration_scale.scale_negative(
+                    self.get_pos_encoding(height, width)
+                )
         else:
             # learned position encoding
             rope_freqs = None
@@ -141,7 +141,7 @@ class DenoiserForRoPEMigration(Denoiser):
         noise_prediction = self.unpatchify(
             patches, height // self.patch_size, width // self.patch_size
         )
-        return MigrationOutput(noise_prediction, self.migration_scale.scale)
+        return noise_prediction
 
 
 class AuraFlorForRoPEMigration(AuraFlowModel):
@@ -153,6 +153,12 @@ class AuraFlorForRoPEMigration(AuraFlowModel):
         self.denoiser.use_rope = False
         yield
         self.denoiser.use_rope = True
+
+    @contextmanager
+    def while_migration_disabled(self):
+        self.denoiser.migration = False
+        yield
+        self.denoiser.migration = True
 
 
 class AuraFlorForRoPEMigrationConfig(AuraFlowConig):
@@ -233,11 +239,12 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
         )
 
         # 3. Predict the noise
-        noise_pred, rope_scale = self.model.denoiser(
+        noise_pred = self.model.denoiser(
             latent=noisy_latents,
             encoder_hidden_states=encoder_hidden_states,
             timestep=timesteps,
         )
+        rope_scale = self.model.denoiser.migration_scale.scale
         if self.model_config.prior_preservation_loss:
             with while_peft_disabled(self.model):
                 with self.model.while_rope_disabled():
@@ -288,6 +295,73 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
 
     def eval_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         raise NotImplementedError
+
+    @torch.inference_mode()
+    def preview_step(self, batch, preview_index: int) -> list[Image.Image]:
+        prompt: str = batch["prompt"]
+        negative_prompt: str | None = batch["negative_prompt"]
+        height: int = batch["height"]
+        width: int = batch["width"]
+        cfg_scale: float = batch["cfg_scale"]
+        num_steps: int = batch["num_steps"]
+        seed: int = batch["seed"]
+
+        if negative_prompt is None and cfg_scale > 0:
+            negative_prompt = ""
+
+        with self.accelerator.autocast():
+            migration_image = self.model.generate(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                cfg_scale=cfg_scale,
+                num_inference_steps=num_steps,
+                seed=seed,
+            )[0]
+
+            with self.model.while_rope_disabled():
+                rope_disabled_image = self.model.generate(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    height=height,
+                    width=width,
+                    cfg_scale=cfg_scale,
+                    num_inference_steps=num_steps,
+                    seed=seed,
+                )[0]
+
+            with self.model.while_migration_disabled():
+                rope_enabled_image = self.model.generate(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    height=height,
+                    width=width,
+                    cfg_scale=cfg_scale,
+                    num_inference_steps=num_steps,
+                    seed=seed,
+                )[0]
+
+        self.log(
+            f"preview/rope_enabled_{preview_index}",
+            wandb_image(rope_enabled_image, caption=prompt),
+            on_step=True,
+            on_epoch=False,
+        )
+        self.log(
+            f"preview/rope_disabled_{preview_index}",
+            wandb_image(rope_disabled_image, caption=prompt),
+            on_step=True,
+            on_epoch=False,
+        )
+        self.log(
+            f"preview/migration_{preview_index}",
+            wandb_image(migration_image, caption=prompt),
+            on_step=True,
+            on_epoch=False,
+        )
+
+        return [rope_enabled_image, rope_disabled_image, migration_image]
 
     def before_setup_model(self):
         super().before_setup_model()

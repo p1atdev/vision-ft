@@ -173,7 +173,7 @@ class ModelForTraining(ABC, nn.Module):
         self,
         batch,
         preview_index: int,
-    ) -> Image.Image:
+    ) -> list[Image.Image]:
         """
         e.g.) generate sample images for checking the training progress
         """
