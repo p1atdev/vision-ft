@@ -1,5 +1,4 @@
 from .config import PeftConfigMixin
-from .lora import LoRALinear, LoRAConfig
 from .functional import (
     replace_to_peft_layer,
     get_adapter_parameters,
@@ -8,5 +7,6 @@ from .functional import (
     while_peft_disabled,
     while_peft_enabled,
 )
+from .lora import LoRALinear, LoRAConfig
 
 PeftConfigUnion = LoRAConfig

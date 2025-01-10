@@ -79,16 +79,6 @@ def tensor_to_images(
     return [Image.fromarray(image) for image in image_array]
 
 
-def is_target_key(name: str, include_keys: list[str], exclude_keys: list[str]) -> bool:
-    """
-    Check if the key is the target key
-    """
-
-    return any(key in name for key in include_keys) and not any(
-        key in name for key in exclude_keys
-    )
-
-
 def remove_orig_mod_prefix(name: str) -> str:
     """
     Remove the "_orig_mod." prefix from the key

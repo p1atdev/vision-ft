@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from src.utils.tensor import is_target_key
 from src.modules.quant import (
     replace_to_quant_linear,
     replace_by_prequantized_weights,
@@ -17,21 +16,6 @@ from src.modules.quant.functional import (
     collect_children_keys,
     get_quant_type_from_children_keys,
 )
-
-
-def test_target_key():
-    cases = [
-        # target, include_keys, exclude_keys, expected
-        ("model.linear", ["model."], [], True),
-        ("model.linear", ["model."], ["linear"], False),
-        ("model.linear", ["model."], ["conv"], True),
-        ("model.linear", ["model."], ["conv", "linear"], False),
-        ("model.linear", ["vae."], [], False),
-        ("model.attn.q", ["attn.q"], [], True),
-    ]
-
-    for target, include_keys, exclude_keys, expected in cases:
-        assert is_target_key(target, include_keys, exclude_keys) == expected
 
 
 def test_collect_children_keys():
@@ -94,6 +78,7 @@ def test_replace_to_quant_linear():
             include_keys=["linear"],
             exclude_keys=[],
         )
+        print(model.linear)
         assert isinstance(model.linear, expected)
 
 

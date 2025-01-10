@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import optimum.quanto as quanto
 from bitsandbytes.functional import quantize_4bit
 
-from src.utils.tensor import is_target_key
+from ...utils.state_dict import get_target_keys
 
 from .bnb import BnbLinear8bit, BnbLinear4bit
 from .ao import AOLinearNF4, AOLinearFP8
@@ -81,16 +81,16 @@ def _get_quant_linear(
 def _replace_to_quant_linear(
     module: nn.Module,
     quant_type: QUANT_TYPE,
-    include_keys: list[str],
-    exclude_keys: list[str] = [],
+    target_keys: list[str],
     prefix: str = "",
 ) -> None:
     for name, layer in module.named_children():
         full_name = f"{prefix}{name}"
 
         if isinstance(layer, nn.Linear):
-            if not is_target_key(full_name, include_keys, exclude_keys):
+            if full_name not in target_keys:
                 continue
+
             # replace with quantized module
             quantized_module = _get_quant_linear(layer, quant_type)
             quantized_module.requires_grad_(False)
@@ -100,8 +100,7 @@ def _replace_to_quant_linear(
             _replace_to_quant_linear(
                 layer,
                 quant_type,
-                include_keys,
-                exclude_keys,
+                target_keys,
                 f"{full_name}.",
             )
 
@@ -115,11 +114,16 @@ def replace_to_quant_linear(
     """
     Replace the Linear layer with quantized Linear layer
     """
+    target_keys = get_target_keys(
+        include_keys,
+        exclude_keys,
+        [name for name, _ in model.named_modules()],
+    )
+    print(target_keys)
     _replace_to_quant_linear(
         model,
         quant_type,
-        include_keys,
-        exclude_keys,
+        target_keys,
     )
     return model
 
@@ -127,14 +131,13 @@ def replace_to_quant_linear(
 def _quantize_inplace(
     module: nn.Module,
     quant_type: QUANT_TYPE,
-    include_keys: list[str],
-    exclude_keys: list[str] = [],
+    target_keys: list[str],
     prefix: str = "",
 ) -> None:
     for name, layer in module.named_children():
         full_name = f"{prefix}{name}"
         if isinstance(layer, nn.Linear):
-            if not is_target_key(full_name, include_keys, exclude_keys):
+            if full_name not in target_keys:
                 continue
 
             ## Bitsandbytes
@@ -191,8 +194,7 @@ def _quantize_inplace(
             _quantize_inplace(
                 layer,
                 quant_type,
-                include_keys,
-                exclude_keys,
+                target_keys,
                 f"{full_name}.",
             )
 
@@ -203,11 +205,15 @@ def quantize_inplace(
     include_keys: list[str],
     exclude_keys: list[str] = [],
 ) -> None:
+    target_keys = get_target_keys(
+        include_keys,
+        exclude_keys,
+        [name for name, _ in model.named_modules()],
+    )
     _quantize_inplace(
         model,
         quant_type,
-        include_keys,
-        exclude_keys,
+        target_keys,
     )
 
 
@@ -293,11 +299,17 @@ def quantize_state_dict(
     include_keys: list[str],
     exclude_keys: list[str] = [],
 ) -> dict[str, torch.Tensor]:
+    target_keys = get_target_keys(
+        include_keys,
+        exclude_keys,
+        list(state_dict.keys()),
+    )
+
     if not (quant_type == "bnb_nf4" or quant_type == "bnb_fp4"):
         raise NotImplementedError("Only bitsandbytes 4bit quantization is supported")
 
     for key in list(state_dict.keys()):
-        if not is_target_key(key, include_keys, exclude_keys):
+        if key not in target_keys:
             continue
 
         if quant_type == "bnb_nf4" or quant_type == "bnb_fp4":

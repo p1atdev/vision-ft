@@ -4,6 +4,7 @@ import torch.nn as nn
 from typing import Literal
 
 from .config import PeftConfigMixin
+from .util import PeftLayer
 
 
 class LoRAConfig(PeftConfigMixin):
@@ -14,7 +15,7 @@ class LoRAConfig(PeftConfigMixin):
     use_bias: bool = False
 
 
-class LoRALinear(nn.Module):
+class LoRALinear(PeftLayer):
     adapter_param_names = ["lora_up", "lora_down", "alpha"]
     adapter_weight_names = ["lora_up.weight", "lora_down.weight", "alpha"]
 

@@ -16,10 +16,22 @@ from src.models.auraflow import (
     convert_to_original_key,
     convert_to_comfy_key,
 )
+from src.utils.state_dict import RegexMatch
 
 
 @torch.no_grad()
 def test_replace_lora_linear():
+    class ChildLayer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.child_1 = nn.Linear(10, 10)  # <- target
+            self.child_extra = nn.Linear(10, 10)
+
+        def forward(self, x):
+            out = self.child_1(x)
+            out = self.child_extra(out)
+            return out
+
     class TestModel(nn.Module):
         def __init__(self):
             super().__init__()
@@ -33,7 +45,8 @@ def test_replace_lora_linear():
                 nn.ReLU(),
                 nn.Linear(10, 10),
             )
-            self.layer3 = nn.ModuleList(
+            self.child = ChildLayer()
+            self.last_layer = nn.ModuleList(
                 [
                     nn.Linear(10, 20),  # <- target
                 ]
@@ -42,7 +55,7 @@ def test_replace_lora_linear():
         def forward(self, x):
             out = self.layer1(x)
             out = self.layer2(out)
-            out = self.layer3[0](out)
+            out = self.last_layer[0](out)
             return out
 
     model = TestModel().to(torch.float16)
@@ -54,7 +67,7 @@ def test_replace_lora_linear():
         alpha=1.0,
         dropout=0.0,
         use_bias=False,
-        include_keys=[".0"],
+        include_keys=[".0", RegexMatch(regex=r".*\.child_\d+")],
         exclude_keys=["layer2"],
     )
 
@@ -72,9 +85,13 @@ def test_replace_lora_linear():
     assert isinstance(model.layer1[2], nn.Linear)
     assert isinstance(model.layer2[0], nn.Linear)
     assert isinstance(model.layer2[2], nn.Linear)
-    assert isinstance(model.layer3[0], LoRALinear)
-    assert model.layer3[0].lora_down.weight.T.shape == torch.Size([10, 4])
-    assert model.layer3[0].lora_up.weight.T.shape == torch.Size([4, 20])
+    assert isinstance(model.child.child_1, LoRALinear)
+    assert model.child.child_1.lora_down.weight.T.shape == torch.Size([10, 4])
+    assert model.child.child_1.lora_up.weight.T.shape == torch.Size([4, 10])
+    assert isinstance(model.child.child_extra, nn.Linear)
+    assert isinstance(model.last_layer[0], LoRALinear)
+    assert model.last_layer[0].lora_down.weight.T.shape == torch.Size([10, 4])
+    assert model.last_layer[0].lora_up.weight.T.shape == torch.Size([4, 20])
 
     lora_output = model(inputs)
 
@@ -90,16 +107,19 @@ def test_replace_lora_linear():
 
     adapter_params = get_adapter_parameters(model)
     assert (
-        len(adapter_params) == 6
+        len(adapter_params) == 9
     )  # layer1.0.lora_up.weight, layer1.0.lora_down.weight, layer1.0.alpha
     assert sorted(adapter_params.keys()) == sorted(
         [
             "layer1.0.lora_down.weight",
             "layer1.0.lora_up.weight",
             "layer1.0.alpha",
-            "layer3.0.lora_down.weight",
-            "layer3.0.lora_up.weight",
-            "layer3.0.alpha",
+            "child.child_1.lora_down.weight",
+            "child.child_1.lora_up.weight",
+            "child.child_1.alpha",
+            "last_layer.0.lora_down.weight",
+            "last_layer.0.lora_up.weight",
+            "last_layer.0.alpha",
         ]
     )
 

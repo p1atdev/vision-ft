@@ -12,8 +12,16 @@ peft:
 
   dtype: bfloat16
 
-  include_keys: [".attn.", ".mlp.", ".modC.", ".modC.", ".modX."]
-  exclude_keys: ["text_encoder", "vae", "t_embedder", "final_linear"]
+  include_keys:
+    - regex: r".*\.attn\.w2[qkvo]"
+    - regex: r".*\.mlp[X]?\."
+    - regex: r".*single_layers\.\d+\.attn\.w1[qkvo]"
+  exclude_keys:
+    - "text_encoder"
+    - "vae"
+    - "t_embedder"
+    - "final_linear"
+    - regex: r"\.mod[CX]{1,2}"
 
 dataset:
   folder: "data/images"
