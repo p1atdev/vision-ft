@@ -76,12 +76,12 @@ class DenoiserForRoPEMigration(Denoiser):
                 base_freqs[..., 1] = 0  # base_freqs does not rotate
                 difference = base_freqs - rope_freqs
                 rope_freqs = base_freqs - self.migration_scale.scale_positive(
-                    difference
+                    difference,
                 )
 
                 # add scaled position encoding
                 patches = patches + self.migration_scale.scale_negative(
-                    self.get_pos_encoding(height, width)
+                    self.get_pos_encoding(height, width),
                 )
         else:
             # learned position encoding
@@ -167,6 +167,8 @@ class AuraFlorForRoPEMigrationConfig(AuraFlowConig):
     migration_loss: bool = True  # gradually migrate to RoPE
     prior_preservation_loss: bool = False  # preserve the prior
 
+    migration_freezing_threshold: float | None = 1e-7
+
 
 class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
     model: AuraFlorForRoPEMigration
@@ -210,12 +212,22 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
             ), "This model is not for positional attention training"
             with init_empty_weights():
                 self.model = AuraFlorForRoPEMigration(self.model_config)
-                # freeze other modules
-                self.model.text_encoder.eval()
-                self.model.vae.eval()  # type: ignore
 
             self.model._load_original_weights()
             assert self.model.denoiser.migration_scale.scale.requires_grad is True
+
+            # freeze other modules
+            self.model.text_encoder.eval()
+            self.model.vae.eval()  # type: ignore
+
+            # set threshold
+            self.model.denoiser.migration_scale.freezing_threshold = (
+                self.model_config.migration_freezing_threshold
+            )
+            self.print(
+                "Migration freezing threshold is set to",
+                self.model_config.migration_freezing_threshold,
+            )
 
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
@@ -244,7 +256,7 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
             encoder_hidden_states=encoder_hidden_states,
             timestep=timesteps,
         )
-        rope_scale = self.model.denoiser.migration_scale.scale
+        rope_scale = self.model.denoiser.migration_scale.inner_scale
         if self.model_config.prior_preservation_loss:
             with while_peft_disabled(self.model):
                 with self.model.while_rope_disabled():

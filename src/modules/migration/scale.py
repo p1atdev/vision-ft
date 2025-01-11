@@ -3,17 +3,41 @@ import torch.nn as nn
 
 
 class MigrationScaleFromZero(nn.Module):
-    def __init__(self, dim: int = 1):
+    """
+    Start from 0 and gradually increase to 1.
+    """
+
+    def __init__(
+        self,
+        dim: int = 1,
+        freezing_threshold: float | None = None,
+    ):
         super().__init__()
 
         self.dim = dim
         self.scale = nn.Parameter(torch.zeros(dim))
+        self.freezing_threshold = freezing_threshold
 
-    def scale_positive(self, input: torch.Tensor) -> torch.Tensor:
-        return input * self.scale
+    @property
+    def inner_scale(self) -> torch.Tensor:
+        if (threshold := self.freezing_threshold) is not None and (
+            1 - self.scale
+        ).abs().max() < threshold:
+            return torch.ones_like(self.scale.detach())
 
-    def scale_negative(self, input: torch.Tensor) -> torch.Tensor:
-        return input * (1 - self.scale)
+        return self.scale
+
+    def scale_positive(
+        self,
+        input: torch.Tensor,
+    ) -> torch.Tensor:
+        return input * self.inner_scale
+
+    def scale_negative(
+        self,
+        input: torch.Tensor,
+    ) -> torch.Tensor:
+        return input * (1 - self.inner_scale)
 
     def _load_from_state_dict(
         self,
