@@ -144,7 +144,7 @@ class DenoiserForRoPEMigration(Denoiser):
         return noise_prediction
 
 
-class AuraFlorForRoPEMigration(AuraFlowModel):
+class AuraFlowForRoPEMigration(AuraFlowModel):
     denoiser: DenoiserForRoPEMigration
     denoiser_class = DenoiserForRoPEMigration
 
@@ -161,7 +161,7 @@ class AuraFlorForRoPEMigration(AuraFlowModel):
         self.denoiser.migration = True
 
 
-class AuraFlorForRoPEMigrationConfig(AuraFlowConig):
+class AuraFlowForRoPEMigrationConfig(AuraFlowConig):
     # loss flags
     noise_prediction_loss: bool = True  # normal text to image training loss
     migration_loss: bool = True  # gradually migrate to RoPE
@@ -171,10 +171,10 @@ class AuraFlorForRoPEMigrationConfig(AuraFlowConig):
 
 
 class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
-    model: AuraFlorForRoPEMigration
+    model: AuraFlowForRoPEMigration
 
-    model_config: AuraFlorForRoPEMigrationConfig
-    model_config_class = AuraFlorForRoPEMigrationConfig
+    model_config: AuraFlowForRoPEMigrationConfig
+    model_config_class = AuraFlowForRoPEMigrationConfig
 
     def sanity_check(self):
         # migration scale must be trainable
