@@ -75,6 +75,7 @@ class TrainerConfig(BaseModel):
     torch_compile_args: dict = {}
 
     gradient_checkpointing: bool = False
+    gradient_accumulation_steps: int = 1
 
     # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
     fp32_matmul_precision: Literal["highest", "high", "medium"] | None = None

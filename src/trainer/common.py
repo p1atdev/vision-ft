@@ -51,6 +51,7 @@ class Trainer:
 
         self.accelerator = Accelerator(
             log_with=get_trackers(config),
+            gradient_accumulation_steps=config.trainer.gradient_accumulation_steps,
         )
         if self.debug_mode is False and (tracker := config.tracker) is not None:
             self.accelerator.init_trackers(
@@ -226,23 +227,24 @@ class Trainer:
                 total=len(self.train_dataloader), desc=f"Train Epoch {epoch}"
             ) as pbar:
                 for _steps, batch in enumerate(self.train_dataloader):
-                    current_step += 1
-                    self.model.before_train_step()
+                    with self.accelerator.accumulate(self.model):
+                        current_step += 1
+                        self.model.before_train_step()
 
-                    with self.accelerator.autocast():
-                        loss = self.model.train_step(batch)
-                    self.model.backward(loss)
-                    pbar.set_postfix({"loss": loss.item()})
+                        with self.accelerator.autocast():
+                            loss = self.model.train_step(batch)
+                        self.model.backward(loss)
+                        pbar.set_postfix({"loss": loss.item()})
 
-                    pbar.update(1)
+                        pbar.update(1)
 
-                    self.call_saving_callbacks(epoch, current_step)
-                    self.call_preview_callbacks(epoch, current_step)
+                        self.call_saving_callbacks(epoch, current_step)
+                        self.call_preview_callbacks(epoch, current_step)
 
-                    self.model.after_train_step()
+                        self.model.after_train_step()
 
-                    if self.debug_mode == "1step":
-                        break
+                        if self.debug_mode == "1step":
+                            break
 
             self.model.after_train_epoch()
             self.model.log("epoch", epoch)
