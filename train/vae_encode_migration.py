@@ -200,11 +200,11 @@ class AuraFlowForVAEEncoderMigration(nn.Module):
         return self.denoiser.pad_patches(self.patchify(latent))
 
     def encode_flux_vae(self, image: torch.Tensor) -> torch.Tensor:
+        # subtract the shift factor and then scale
         latent = (
             self.flux_vae.encode(image).latent_dist.sample()  # type: ignore
-            * self.flux_vae.scaling_factor
-            + self.flux_vae.shift_factor
-        )
+            - self.flux_vae.shift_factor
+        ) * self.flux_vae.scaling_factor
         return self.patchify(latent)
 
 
@@ -236,9 +236,6 @@ class AuraFlowForVAEEncoderMigrationTraining(ModelForTraining, nn.Module):
 
     def setup_model(self):
         if self.accelerator.is_main_process:
-            assert (
-                self.model_config.denoiser.use_rope
-            ), "This model is not for positional attention training"
             with init_empty_weights():
                 self.model = AuraFlowForVAEEncoderMigration(self.model_config)
 
