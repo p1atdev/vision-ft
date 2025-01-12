@@ -17,7 +17,12 @@ class LoRAConfig(PeftConfigMixin):
 
 class LoRALinear(PeftLayer):
     adapter_param_names = ["lora_up", "lora_down", "alpha"]
-    adapter_weight_names = ["lora_up.weight", "lora_down.weight", "alpha"]
+    adapter_weight_names = [
+        "lora_up.weight",
+        "lora_up.bias",
+        "lora_down.weight",
+        "alpha",
+    ]
 
     def __init__(
         self,
@@ -38,6 +43,8 @@ class LoRALinear(PeftLayer):
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
         self.rank = config.rank
+        if config.use_bias:
+            self.lora_up.bias = nn.Parameter(torch.zeros(out_features, dtype=dtype))
 
         # enable/disable LoRA
         self.enabled = True
@@ -101,5 +108,9 @@ class LoRALinear(PeftLayer):
         module.alpha = nn.Parameter(
             adapter_weights["alpha"].to(original_linear.weight.device)
         )
+        if "bias" in adapter_weights:
+            module.lora_up.bias = nn.Parameter(
+                adapter_weights["lora_up.bias"].to(original_linear.weight.device)
+            )
 
         return module
