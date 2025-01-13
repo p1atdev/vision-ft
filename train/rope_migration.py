@@ -1,5 +1,6 @@
 import click
 from PIL import Image
+from typing import Literal
 from contextlib import contextmanager
 
 import torch
@@ -18,7 +19,7 @@ from src.config import TrainConfig
 from src.dataset.text_to_image import TextToImageDatasetConfig
 from src.modules.peft import get_adapter_parameters, while_peft_disabled
 from src.modules.positional_encoding.rope import RoPEFrequency
-from src.modules.timestep import sigmoid_randn
+from src.modules.timestep import sigmoid_randn, uniform_randn
 from src.modules.loss.flow_match import (
     prepare_noised_latents,
     loss_with_predicted_velocity,
@@ -168,6 +169,7 @@ class AuraFlowForRoPEMigrationConfig(AuraFlowConig):
     prior_preservation_loss: bool = False  # preserve the prior
 
     migration_freezing_threshold: float | None = 1e-7
+    timestep_sampling: Literal["sigmoid", "uniform"] = "sigmoid"
 
 
 class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
@@ -211,7 +213,7 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
                 self.model_config.denoiser.use_rope
             ), "This model is not for positional attention training"
             with init_empty_weights():
-                self.model = AuraFlorForRoPEMigration(self.model_config)
+                self.model = AuraFlowForRoPEMigration(self.model_config)
 
             self.model._load_original_weights()
             assert self.model.denoiser.migration_scale.scale.requires_grad is True
@@ -221,13 +223,17 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
             self.model.vae.eval()  # type: ignore
 
             # set threshold
-            self.model.denoiser.migration_scale.freezing_threshold = (
-                self.model_config.migration_freezing_threshold
-            )
-            self.print(
-                "Migration freezing threshold is set to",
-                self.model_config.migration_freezing_threshold,
-            )
+            if self.model_config.migration_loss:
+                self.model.denoiser.migration_scale.freezing_threshold = (
+                    self.model_config.migration_freezing_threshold
+                )
+                self.print(
+                    "Migration freezing threshold is set to",
+                    self.model_config.migration_freezing_threshold,
+                )
+            else:
+                self.print("Migration loss is disabled")
+                self.model.denoiser.migration = False
 
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
@@ -239,10 +245,20 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
                 caption
             ).positive_embeddings
             latents = self.model.encode_image(pixel_values)
-            timesteps = sigmoid_randn(
-                latents_shape=latents.shape,
-                device=self.accelerator.device,
-            )
+            if self.model_config.timestep_sampling == "sigmoid":
+                timesteps = sigmoid_randn(
+                    latents_shape=latents.shape,
+                    device=self.accelerator.device,
+                )
+            elif self.model_config.timestep_sampling == "uniform":
+                timesteps = uniform_randn(
+                    latents_shape=latents.shape,
+                    device=self.accelerator.device,
+                )
+            else:
+                raise ValueError(
+                    f"Invalid timestep sampling: {self.model_config.timestep_sampling}"
+                )
 
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(
