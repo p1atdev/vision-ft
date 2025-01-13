@@ -85,3 +85,14 @@ def sigmoid_randn(
     timesteps = logits_norm.sigmoid()
 
     return timesteps
+
+
+def uniform_randn(
+    latents_shape: torch.Size,
+    device: torch.device,
+):
+    batch_size, _channels, _height, _width = latents_shape
+
+    timesteps = torch.rand(batch_size, device=device)
+
+    return timesteps
