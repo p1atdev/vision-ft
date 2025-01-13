@@ -20,6 +20,8 @@ class T2IPreviewArgs(BaseModel):
 
     seed: int = 0
 
+    extra: dict = {}
+
 
 class TextToImagePreviewConfig(DatasetConfig):
     path: str
@@ -62,4 +64,5 @@ class TextToImagePreviewConfig(DatasetConfig):
                 "cfg_scale": item.cfg_scale,
                 "num_steps": item.num_steps,
                 "seed": item.seed,
+                "extra": item.extra,
             }
