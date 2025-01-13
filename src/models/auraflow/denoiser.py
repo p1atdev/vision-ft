@@ -1,5 +1,3 @@
-import warnings
-
 import math
 import torch
 import torch.nn as nn
@@ -601,9 +599,14 @@ class MMDiT(nn.Module):
         n_register_tokens: int = 8,
         hidden_act: str = "silu",
         use_flash_attn: bool = False,
+        # RoPE
         use_rope: bool = False,
         rope_dim_sizes: list[int] = [32, 112, 112],
         rope_theta: int = 10000,
+        # Shortcut
+        use_shortcut: bool = False,
+        # Guidance
+        use_guidance: bool = False,
     ):
         super().__init__()
 
@@ -633,6 +636,18 @@ class MMDiT(nn.Module):
             )
         else:
             self.rope_frequency = None
+
+        # shortcut models
+        if use_shortcut:
+            self.shortcut_embedder = TimestepEmbedder(self.inner_dim)
+        else:
+            self.shortcut_embedder = None
+
+        # guidance distill
+        if use_guidance:
+            self.guidance_embedder = TimestepEmbedder(self.inner_dim)
+        else:
+            self.guidance_embedder = None
 
         # learnable positional encoding
         self.positional_encoding = nn.Parameter(
@@ -687,6 +702,9 @@ class MMDiT(nn.Module):
 
         self.use_flash_attn = use_flash_attn
         self.use_rope = use_rope
+        self.use_shortcut = use_shortcut
+        self.use_guidance = use_guidance
+
         self.gradient_checkpointing = False
 
         self.h_max = int(self.max_pos_embed_size**0.5)
@@ -806,6 +824,8 @@ class MMDiT(nn.Module):
         latent: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
+        shortcut_exponent: int | None = None,
+        guidance_scale: float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         batch_size, _in_channels, height, width = latent.shape
@@ -816,8 +836,21 @@ class MMDiT(nn.Module):
         cond_tokens = torch.cat(
             [self.register_tokens.repeat(cond_tokens.size(0), 1, 1), cond_tokens], dim=1
         )
-        timestep = timestep[:batch_size]
+
+        # 2. timestep embedding
         global_cond = self.t_embedder(timestep)
+        if shortcut_exponent is not None:
+            # shortcut models
+            assert (
+                self.shortcut_embedder is not None
+            ), "shortcut_exponent is provided but shortcut_embedder is not set"
+            global_cond += self.shortcut_embedder(shortcut_exponent)
+        if guidance_scale is not None:
+            # flux like guidance
+            assert (
+                self.guidance_embedder is not None
+            ), "guidance_scale is provided but guidance_embedder is not set"
+            global_cond += self.guidance_embedder(timestep)
 
         # 2. patchify
         patches = self.patchify(latent)
@@ -917,6 +950,8 @@ class Denoiser(
             use_rope=config.use_rope,
             rope_dim_sizes=config.rope_dim_sizes,
             rope_theta=config.rope_theta,
+            use_shortcut=config.use_shortcut,
+            use_guidance=config.use_guidance,
         )
 
         self.config = config

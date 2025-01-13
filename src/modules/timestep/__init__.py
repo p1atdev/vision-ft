@@ -1,1 +1,6 @@
-from .sampling import shift_sigmoid_randn, flux_shift_randn, sigmoid_randn
+from .sampling import (
+    shift_sigmoid_randn,
+    flux_shift_randn,
+    sigmoid_randn,
+    uniform_randn,
+)

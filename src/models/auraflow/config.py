@@ -19,10 +19,15 @@ class DenoiserConfig(BaseModel):
     num_register_tokens: int = 8
     hidden_act: str = "silu"
 
+    # RoPE
     use_flash_attn: bool = True
     use_rope: bool = False
     rope_theta: int = 10000
     rope_dim_sizes: list[int] = [32, 112, 112]
+
+    # Shortcut
+    use_shortcut: bool = False
+    use_guidance: bool = False
 
     @field_validator("rope_dim_sizes", mode="after")
     def check_rope_dim_sizes(cls, v: list[int], info: ValidationInfo):
