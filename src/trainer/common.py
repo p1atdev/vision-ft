@@ -91,7 +91,7 @@ class Trainer:
                 warnings.warn("No preview callbacks found in the config")
             return [get_preview_callback(callback) for callback in preview.callbacks]
 
-        self.accelerator.print("No preview config. Model will not be saved.")
+        self.accelerator.print("No preview config. Preview will not be generated.")
         return []
 
     def prepare_dataloaders(self):
