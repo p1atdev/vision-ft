@@ -76,7 +76,6 @@ def _get_shortcut_destination(
 class ShortcutTargets(NamedTuple):
     first_shortcut: torch.Tensor
     second_shortcut: torch.Tensor
-    # double_shortcut: torch.Tensor
 
 
 @torch.no_grad()
@@ -122,7 +121,6 @@ def prepare_self_consistency_targets(
     return ShortcutTargets(
         first_shortcut=first_shortcut,
         second_shortcut=second_shortcut,
-        # double_shortcut=double_shortcut,
     )
 
 
