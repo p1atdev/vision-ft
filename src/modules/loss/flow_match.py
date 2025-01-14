@@ -12,7 +12,7 @@ class NoisedLatents(NamedTuple):
 # ref: https://github.com/cloneofsimo/minRF/blob/4fc10e0cc8ba976152c7936a1af9717209f03e18/advanced/main_t2i.py#L135-L162
 def prepare_noised_latents(
     latents: torch.Tensor,
-    timestep: torch.Tensor,
+    timestep: torch.Tensor,  # (1→0)
     max_sigma: float = 1.0,
 ) -> NoisedLatents:
     """Prepare noised latents by interpolating between input latents and random noise.
@@ -57,15 +57,22 @@ def prepare_noised_latents(
     return NoisedLatents(noisy_latents, random_noise)
 
 
+def get_flow_match_target_velocity(
+    latents: torch.Tensor,
+    random_noise: torch.Tensor,
+) -> torch.Tensor:
+    return random_noise - latents
+
+
 # default MSE loss
 def loss_with_predicted_velocity(
     latents: torch.Tensor,
     random_noise: torch.Tensor,
-    predicted_noise: torch.Tensor,
+    predicted_velocity: torch.Tensor,
 ) -> torch.Tensor:
     loss = F.mse_loss(
         random_noise - latents,  # added noise
-        predicted_noise,
+        predicted_velocity,
         reduction="mean",
     )
 

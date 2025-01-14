@@ -83,7 +83,7 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         )
 
         # 3. Predict the noise
-        noise_pred = self.model.denoiser(
+        velocity_pred = self.model.denoiser(
             latent=noisy_latents,
             encoder_hidden_states=encoder_hidden_states,
             timestep=timesteps,
@@ -93,7 +93,7 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         l2_loss = loss_with_predicted_velocity(
             latents=latents,
             random_noise=random_noise,
-            predicted_noise=noise_pred,
+            predicted_velocity=velocity_pred,
         )
         total_loss = l2_loss
 
