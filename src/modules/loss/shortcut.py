@@ -79,6 +79,7 @@ class ShortcutTargets(NamedTuple):
     # double_shortcut: torch.Tensor
 
 
+@torch.no_grad()
 def prepare_self_consistency_targets(
     denoiser: nn.Module,
     latents: torch.Tensor,  # noisy latents
@@ -87,39 +88,36 @@ def prepare_self_consistency_targets(
     departure_timesteps: torch.Tensor,
     double_shortcut_duration: torch.Tensor,  # 1/64, ... 1/2, 1/1 timestep duration
 ):
-    with torch.no_grad():
-        # 1. predict the first shortcut
-        first_shortcut = _get_shortcut_destination(
-            denoiser=denoiser,
-            latents=latents,
-            encoder_hidden_states=encoder_hidden_states,
-            current_timesteps=departure_timesteps,
-            # 1 / (2^(num_shortcut_steps + 1)) * 2 = 1 / (2^num_shortcut_steps)
-            # e.g.) 1/(2^3) * 2 = 1/8 * 2 = 1/(2^2) = 1/4
-            shortcut_exponent=shortcut_exponent + 1,
-        )
+    # 1. predict the first shortcut
+    first_shortcut = _get_shortcut_destination(
+        denoiser=denoiser,
+        latents=latents,
+        encoder_hidden_states=encoder_hidden_states,
+        current_timesteps=departure_timesteps,
+        # 1 / (2^(num_shortcut_steps + 1)) * 2 = 1 / (2^num_shortcut_steps)
+        # e.g.) 1/(2^3) * 2 = 1/8 * 2 = 1/(2^2) = 1/4
+        shortcut_exponent=shortcut_exponent + 1,
+    )
 
-        # 2. predict the second shortcut
-        # denoise with the first shortcut
-        half_shortcut_duration = double_shortcut_duration / 2  # 1/128, 1/64, ..., 1/2
-        print("half_shortcut_duration:", half_shortcut_duration)
-        print("next_timesteps:", departure_timesteps - half_shortcut_duration)
-        pseudo_midpoint = latents - (
-            first_shortcut
-            # [:, None, None, None] is for broadcasting (i.e. (B,) -> (B, 1, 1, 1))
-            * half_shortcut_duration[:, None, None, None]
-        )
-        second_shortcut = _get_shortcut_destination(
-            denoiser=denoiser,
-            latents=pseudo_midpoint,
-            encoder_hidden_states=encoder_hidden_states,
-            current_timesteps=(
-                departure_timesteps - half_shortcut_duration  # next timestep (1→0)
-            ),
-            shortcut_exponent=shortcut_exponent + 1,
-        )
+    # 2. predict the second shortcut
+    # denoise with the first shortcut
+    half_shortcut_duration = double_shortcut_duration / 2  # 1/128, 1/64, ..., 1/2
+    pseudo_midpoint = latents - (
+        first_shortcut
+        # [:, None, None, None] is for broadcasting (i.e. (B,) -> (B, 1, 1, 1))
+        * half_shortcut_duration[:, None, None, None]
+    )
+    second_shortcut = _get_shortcut_destination(
+        denoiser=denoiser,
+        latents=pseudo_midpoint,
+        encoder_hidden_states=encoder_hidden_states,
+        current_timesteps=(
+            departure_timesteps - half_shortcut_duration  # next timestep (1→0)
+        ),
+        shortcut_exponent=shortcut_exponent + 1,
+    )
 
-        # above is not in the backward graph
+    # above is not in the backward graph
 
     return ShortcutTargets(
         first_shortcut=first_shortcut,

@@ -3,4 +3,6 @@ from .sampling import (
     flux_shift_randn,
     sigmoid_randn,
     uniform_randn,
+    timestep_randn,
+    TimestepSamplingType,
 )

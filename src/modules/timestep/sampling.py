@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Literal
 import math
 
 import torch
@@ -96,3 +96,24 @@ def uniform_randn(
     timesteps = torch.rand(batch_size, device=device)
 
     return timesteps
+
+
+TimestepSamplingType = Literal["shift_sigmoid", "flux_shift", "sigmoid", "uniform"]
+
+
+def timestep_randn(
+    latents_shape: torch.Size,
+    device: torch.device,
+    sampling_type: TimestepSamplingType = "sigmoid",
+    **kwargs,
+):
+    if sampling_type == "shift_sigmoid":
+        return shift_sigmoid_randn(latents_shape, device, **kwargs)
+    elif sampling_type == "flux_shift":
+        return flux_shift_randn(latents_shape, device, **kwargs)
+    elif sampling_type == "sigmoid":
+        return sigmoid_randn(latents_shape, device, **kwargs)
+    elif sampling_type == "uniform":
+        return uniform_randn(latents_shape, device)
+    else:
+        raise ValueError(f"Invalid sampling type: {sampling_type}")
