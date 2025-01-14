@@ -311,7 +311,7 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
         if self.model_config.prior_preservation_loss:
             ppl_loss = F.mse_loss(
                 preserved_noise_pred,
-                noise_pred,
+                velocity_pred,
                 reduction="mean",
             )
             loss_dict["ppl_loss"] = ppl_loss
