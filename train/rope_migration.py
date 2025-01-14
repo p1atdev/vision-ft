@@ -151,15 +151,17 @@ class AuraFlowForRoPEMigration(AuraFlowModel):
 
     @contextmanager
     def while_rope_disabled(self):
+        tmp = self.denoiser.use_rope
         self.denoiser.use_rope = False
         yield
-        self.denoiser.use_rope = True
+        self.denoiser.use_rope = tmp
 
     @contextmanager
     def while_migration_disabled(self):
+        tmp = self.denoiser.migration
         self.denoiser.migration = False
         yield
-        self.denoiser.migration = True
+        self.denoiser.migration = tmp  # restore
 
 
 class AuraFlowForRoPEMigrationConfig(AuraFlowConig):
@@ -181,7 +183,8 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
     def sanity_check(self):
         # migration scale must be trainable
         assert any(
-            "migration_scale.scale" in n and p.requires_grad is True
+            "migration_scale.scale" in n
+            and p.requires_grad is self.model_config.migration_loss
             for n, p in self.model.named_parameters()
         )
 
@@ -216,7 +219,6 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
                 self.model = AuraFlowForRoPEMigration(self.model_config)
 
             self.model._load_original_weights()
-            assert self.model.denoiser.migration_scale.scale.requires_grad is True
 
             # freeze other modules
             self.model.text_encoder.eval()
@@ -234,6 +236,10 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
             else:
                 self.print("Migration loss is disabled")
                 self.model.denoiser.migration = False
+                self.model.denoiser.migration_scale.freezing_threshold = 2.0
+                self.model.denoiser.migration_scale.scale.data = torch.ones_like(
+                    self.model.denoiser.migration_scale.scale
+                )
 
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
@@ -402,7 +408,7 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
         # make migration scale trainable
         for n, p in self.model.named_parameters():
             if "migration_scale.scale" in n:
-                p.requires_grad = True
+                p.requires_grad = self.model_config.migration_loss
 
         super().after_setup_model()
 
