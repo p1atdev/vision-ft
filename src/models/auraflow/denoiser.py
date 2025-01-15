@@ -824,7 +824,7 @@ class MMDiT(nn.Module):
         latent: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
-        shortcut_exponent: int | None = None,
+        shortcut_duration: int | None = None,
         guidance_scale: float | None = None,
         **kwargs,
     ) -> torch.Tensor:
@@ -839,12 +839,12 @@ class MMDiT(nn.Module):
 
         # 2. timestep embedding
         global_cond = self.t_embedder(timestep)
-        if shortcut_exponent is not None:
+        if shortcut_duration is not None:
             # shortcut models
             assert (
                 self.shortcut_embedder is not None
-            ), "shortcut_exponent is provided but shortcut_embedder is not set"
-            global_cond += self.shortcut_embedder(shortcut_exponent)
+            ), "shortcut_duration is provided but shortcut_embedder is not set"
+            global_cond += self.shortcut_embedder(shortcut_duration)
         if guidance_scale is not None:
             # flux like guidance
             assert (

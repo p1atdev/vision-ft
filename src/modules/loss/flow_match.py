@@ -71,8 +71,8 @@ def loss_with_predicted_velocity(
     predicted_velocity: torch.Tensor,
 ) -> torch.Tensor:
     loss = F.mse_loss(
-        random_noise - latents,  # added noise
         predicted_velocity,
+        random_noise - latents,  # added noise
         reduction="mean",
     )
 
