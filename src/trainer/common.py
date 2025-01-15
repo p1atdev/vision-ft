@@ -161,6 +161,8 @@ class Trainer:
                 if not isinstance(peft_config, list):
                     peft_config = [peft_config]
 
+                # freeze base model before replace
+                self.model.requires_grad_(False)
                 for peft_target_config in peft_config:
                     peft_target_config.replace_to_peft_layer(
                         self.model,

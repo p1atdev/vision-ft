@@ -49,9 +49,6 @@ def _replace_to_peft_layer(
             # skip if already replaced
             continue
 
-        # disable grad for all layers
-        layer.requires_grad_(False)
-
         if isinstance(layer, nn.Linear):
             if full_name not in target_keys:
                 continue
