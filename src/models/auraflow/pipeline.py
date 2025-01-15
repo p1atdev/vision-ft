@@ -84,6 +84,7 @@ class AuraFlowModel(nn.Module):
 
     def _load_original_weights(
         self,
+        strict: bool = True,
     ):
         config = self.config
         state_dict = load_file(config.checkpoint_path)
@@ -100,6 +101,7 @@ class AuraFlowModel(nn.Module):
                 for key, value in state_dict.items()
                 if key.startswith("denoiser.")
             },
+            strict=strict,
             assign=True,
         )
         vae_type = detect_vae_type(state_dict)
@@ -120,6 +122,7 @@ class AuraFlowModel(nn.Module):
                     for key, value in state_dict.items()
                     if key.startswith("vae.")
                 },
+                strict=strict,
                 assign=True,
             )
         self.text_encoder.load_state_dict(
@@ -128,6 +131,7 @@ class AuraFlowModel(nn.Module):
                 for key, value in state_dict.items()
                 if key.startswith("text_encoder.")
             },
+            strict=strict,
             assign=True,
         )
 
