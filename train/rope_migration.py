@@ -19,7 +19,7 @@ from src.config import TrainConfig
 from src.dataset.text_to_image import TextToImageDatasetConfig
 from src.modules.peft import get_adapter_parameters, while_peft_disabled
 from src.modules.positional_encoding.rope import RoPEFrequency
-from src.modules.timestep import sigmoid_randn, uniform_randn
+from src.modules.timestep import sigmoid_randn, sample_timestep
 from src.modules.loss.flow_match import (
     prepare_noised_latents,
     loss_with_predicted_velocity,
@@ -251,20 +251,11 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
                 caption
             ).positive_embeddings
             latents = self.model.encode_image(pixel_values)
-            if self.model_config.timestep_sampling == "sigmoid":
-                timesteps = sigmoid_randn(
-                    latents_shape=latents.shape,
-                    device=self.accelerator.device,
-                )
-            elif self.model_config.timestep_sampling == "uniform":
-                timesteps = uniform_randn(
-                    latents_shape=latents.shape,
-                    device=self.accelerator.device,
-                )
-            else:
-                raise ValueError(
-                    f"Invalid timestep sampling: {self.model_config.timestep_sampling}"
-                )
+            timesteps = sample_timestep(
+                latents_shape=latents.shape,
+                device=self.accelerator.device,
+                sampling_type=self.model_config.timestep_sampling,
+            )
 
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(

@@ -87,7 +87,7 @@ def sigmoid_randn(
     return timesteps
 
 
-def uniform_randn(
+def uniform_rand(
     latents_shape: torch.Size,
     device: torch.device,
 ):
@@ -101,7 +101,7 @@ def uniform_randn(
 TimestepSamplingType = Literal["shift_sigmoid", "flux_shift", "sigmoid", "uniform"]
 
 
-def timestep_randn(
+def sample_timestep(
     latents_shape: torch.Size,
     device: torch.device,
     sampling_type: TimestepSamplingType = "sigmoid",
@@ -114,6 +114,6 @@ def timestep_randn(
     elif sampling_type == "sigmoid":
         return sigmoid_randn(latents_shape, device, **kwargs)
     elif sampling_type == "uniform":
-        return uniform_randn(latents_shape, device)
+        return uniform_rand(latents_shape, device)
     else:
         raise ValueError(f"Invalid sampling type: {sampling_type}")

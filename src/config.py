@@ -77,6 +77,8 @@ class TrainerConfig(BaseModel):
     gradient_checkpointing: bool = False
     gradient_accumulation_steps: int = 1
 
+    clip_grad_norm: float | None = None
+
     # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
     fp32_matmul_precision: Literal["highest", "high", "medium"] | None = None
     # https://pytorch.org/docs/stable/notes/cuda.html
