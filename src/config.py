@@ -15,7 +15,7 @@ from .preview import (
     PreviewStrategyConfig,
     LocalPreviewCallbackConfig,
 )
-from .modules.peft import PeftConfigUnion
+from .modules.peft import PeftTargetConfig
 from .dataset import PreviewDatasetAlias
 
 
@@ -88,7 +88,7 @@ class TrainerConfig(BaseModel):
 class TrainConfig(BaseModel):
     model: dict | BaseModel
     dataset: dict | BaseModel
-    peft: PeftConfigUnion | None = None
+    peft: PeftTargetConfig | list[PeftTargetConfig] | None = None
 
     optimizer: OptimizerConfig = OptimizerConfig()
     scheduler: SchedulerConfig | None = None

@@ -17,8 +17,8 @@ from ..utils.logging import get_trackers
 from ..utils.safetensors import load_file_with_rename_key_map
 from ..models.for_training import ModelForTraining
 from ..modules.peft import (
+    PeftTargetConfig,
     PeftConfigMixin,
-    replace_to_peft_layer,
     print_trainable_parameters,
     load_peft_weight,
 )
@@ -27,7 +27,7 @@ from ..modules.peft import (
 class Trainer:
     model: ModelForTraining
 
-    peft_config: PeftConfigMixin | None
+    peft_config: PeftTargetConfig | list[PeftTargetConfig] | None
 
     dataset_config: DatasetConfig
     preview_dataset_config: DatasetConfig | None
@@ -157,17 +157,21 @@ class Trainer:
         if self.peft_config is not None:
             self.print("Applying PEFT")
             self.model._set_is_peft(True)
-            replace_to_peft_layer(
-                self.model,
-                self.peft_config,
-            )
-            if (weight_path := self.peft_config.resume_weight_path) is not None:
-                load_peft_weight(
-                    self.model,
-                    load_file_with_rename_key_map(
-                        weight_path, self.peft_config.resume_rename_key_map
-                    ),
-                )
+            if (peft_config := self.peft_config) is not None:
+                if not isinstance(peft_config, list):
+                    peft_config = [peft_config]
+
+                for peft_target_config in peft_config:
+                    peft_target_config.replace_to_peft_layer(
+                        self.model,
+                    )
+            # if (weight_path := self.peft_config.resume_weight_path) is not None:
+            #     load_peft_weight(
+            #         self.model,
+            #         load_file_with_rename_key_map(
+            #             weight_path, self.peft_config.resume_rename_key_map
+            #         ),
+            #     )
             print_trainable_parameters(self.model, self.print)
         else:
             self.model._set_is_peft(False)

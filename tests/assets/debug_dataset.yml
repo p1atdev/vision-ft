@@ -5,23 +5,24 @@ model:
   dtype: bfloat16
 
 peft:
-  type: lora
-  rank: 8
-  alpha: 1.0
-  dropout: 0.0
+  - config:
+      type: lora
+      rank: 8
+      alpha: 1.0
+      dropout: 0.0
 
-  dtype: bfloat16
+      dtype: bfloat16
 
-  include_keys:
-    - regex: .*\.attn\.w2[qkvo]
-    - regex: .*\.mlp[X]?\.
-    - regex: .*single_layers\.\d+\.attn\.w1[qkvo]
-  exclude_keys:
-    - "text_encoder"
-    - "vae"
-    - "t_embedder"
-    - "final_linear"
-    - regex: \.mod[CX]{1,2}
+    include_keys:
+      - regex: .*\.attn\.w2[qkvo]
+      - regex: .*\.mlp[X]?\.
+      - regex: .*single_layers\.\d+\.attn\.w1[qkvo]
+    exclude_keys:
+      - "text_encoder"
+      - "vae"
+      - "t_embedder"
+      - "final_linear"
+      - regex: \.mod[CX]{1,2}
 
 dataset:
   folder: "data/images"

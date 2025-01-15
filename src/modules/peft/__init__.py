@@ -1,3 +1,8 @@
+from pydantic import BaseModel, field_validator
+
+import torch
+import torch.nn as nn
+
 from .config import PeftConfigMixin
 from .functional import (
     replace_to_peft_layer,
@@ -9,4 +14,31 @@ from .functional import (
 )
 from .lora import LoRALinear, LoRAConfig
 
+from ...utils.state_dict import RegexMatch
+
+
 PeftConfigUnion = LoRAConfig
+
+
+class PeftTargetConfig(BaseModel):
+    include_keys: list[str | RegexMatch] = []
+    exclude_keys: list[str | RegexMatch] = []
+
+    config: PeftConfigUnion
+
+    resume_weight_path: str | None = None
+    resume_rename_key_map: dict[str, str] = {}
+
+    @field_validator("include_keys")
+    def check_include_keys(cls, v):
+        if len(v) == 0:
+            raise ValueError("include_keys must not be empty")
+        return v
+
+    def replace_to_peft_layer(self, model: nn.Module) -> None:
+        replace_to_peft_layer(
+            model,
+            self.include_keys,
+            self.exclude_keys,
+            self.config,
+        )

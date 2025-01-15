@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 
-from accelerate import init_empty_weights, Accelerator
+from accelerate import init_empty_weights
 from safetensors.torch import save_file
 
 from src.modules.peft import (
-    replace_to_peft_layer,
     LoRAConfig,
     LoRALinear,
     get_adapter_parameters,
+    PeftTargetConfig,
 )
 from src.models.auraflow import (
     AuraFlowConig,
@@ -60,13 +60,15 @@ def test_replace_lora_linear():
 
     model = TestModel().to(torch.float16)
 
-    config = LoRAConfig(
-        type="lora",
-        dtype="float16",
-        rank=4,
-        alpha=1.0,
-        dropout=0.0,
-        use_bias=False,
+    config = PeftTargetConfig(
+        config=LoRAConfig(
+            type="lora",
+            dtype="float16",
+            rank=4,
+            alpha=1.0,
+            dropout=0.0,
+            use_bias=False,
+        ),
         include_keys=[".0", RegexMatch(regex=r".*\.child_\d+")],
         exclude_keys=["layer2"],
     )
@@ -74,9 +76,8 @@ def test_replace_lora_linear():
     inputs = torch.randn(1, 10, dtype=torch.float16)
     original_output = model(inputs)
 
-    replace_to_peft_layer(
+    config.replace_to_peft_layer(
         model,
-        config,
     )
 
     assert isinstance(model.layer1[0], LoRALinear)
@@ -124,17 +125,81 @@ def test_replace_lora_linear():
     )
 
 
+@torch.no_grad()
+def test_replace_lora_linear_multiple_target():
+    class TestModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Linear(10, 10)
+            self.layer2 = nn.Linear(10, 10)
+            self.layer3 = nn.Linear(10, 10)
+            self.layer4 = nn.Linear(10, 10)
+            self.layer5 = nn.Linear(10, 10)
+            self.layer6 = nn.Linear(10, 10)
+
+    model = TestModel().to(torch.float16)
+
+    configs = [
+        PeftTargetConfig(
+            config=LoRAConfig(
+                dtype="float16",
+                rank=4,
+                alpha=1.0,
+                dropout=0.0,
+                use_bias=False,
+            ),
+            include_keys=[RegexMatch(regex=r"layer[123]")],
+        ),
+        PeftTargetConfig(
+            config=LoRAConfig(
+                dtype="float16",
+                rank=4,
+                alpha=1.0,
+                dropout=0.0,
+                use_bias=True,
+            ),
+            include_keys=[RegexMatch(regex=r"layer[456]")],
+        ),
+    ]
+
+    for config in configs:
+        config.replace_to_peft_layer(
+            model,
+        )
+
+    # assert trainable parameters
+    assert all(
+        param.requires_grad
+        for name, param in model.named_parameters()
+        if "lora_" in name
+    )
+
+    # original linear must be not trainable
+    assert all(
+        not param.requires_grad
+        for name, param in model.named_parameters()
+        if ".linear" in name
+    )
+
+    # layer[456] must have bias
+    assert model.layer1.lora_up.bias is None
+    assert model.layer4.lora_up.bias is not None
+    assert model.layer4.lora_up.bias.shape == torch.Size([10])
+
+
 def test_save_lora_weight():
     with init_empty_weights():
         model = AuraFlowModel(AuraFlowConig(checkpoint_path="meta"))
 
-    config = LoRAConfig(
-        type="lora",
-        rank=4,
-        alpha=1.0,
-        dropout=0.0,
-        use_bias=False,
-        dtype="bfloat16",
+    config = PeftTargetConfig(
+        config=LoRAConfig(
+            type="lora",
+            rank=4,
+            alpha=1.0,
+            dropout=0.0,
+            use_bias=False,
+            dtype="bfloat16",
+        ),
         include_keys=[
             ".attn.",
             ".mlp.",
@@ -150,9 +215,8 @@ def test_save_lora_weight():
         ],  # exclude text encoder, vae, time embedder, final linear
     )
 
-    replace_to_peft_layer(
+    config.replace_to_peft_layer(
         model,
-        config,
     )
     peft_state_dict = get_adapter_parameters(model)
 

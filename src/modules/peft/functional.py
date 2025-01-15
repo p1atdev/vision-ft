@@ -10,7 +10,7 @@ from .util import PeftLayer
 from .lora import LoRALinear, LoRAConfig
 from ...utils.tensor import remove_orig_mod_prefix
 from ...utils.dtype import str_to_dtype
-from ...utils.state_dict import get_target_keys
+from ...utils.state_dict import get_target_keys, RegexMatch
 
 
 def _get_peft_linear(
@@ -45,6 +45,10 @@ def _replace_to_peft_layer(
     for name, layer in model.named_children():
         full_name = f"{prefix}{name}"
 
+        if isinstance(layer, PeftLayer):
+            # skip if already replaced
+            continue
+
         # disable grad for all layers
         layer.requires_grad_(False)
 
@@ -68,11 +72,13 @@ def _replace_to_peft_layer(
 
 def replace_to_peft_layer(
     model: nn.Module,
+    include_keys: list[str | RegexMatch],
+    exclude_keys: list[str | RegexMatch],
     config: PeftConfigMixin,
 ) -> None:
     target_keys = get_target_keys(
-        config.include_keys,
-        config.exclude_keys,
+        include_keys,
+        exclude_keys,
         [name for name, _ in model.named_modules()],
     )
     _replace_to_peft_layer(model, config, target_keys)
@@ -117,7 +123,8 @@ def _load_peft_weight(
         peft_class = get_peft_linear_class(peft_type)
 
         if isinstance(layer, PeftLayer):
-            #  load adapter state_dict
+            # layer is already replaced with peft layer
+            # load adapter state_dict
             adapter_state_dict = {
                 param_name: state_dict.get(f"{full_name}.{param_name}")
                 for param_name in peft_class.adapter_weight_names
@@ -126,6 +133,7 @@ def _load_peft_weight(
                 layer.load_weights(adapter_state_dict)
 
         elif isinstance(layer, nn.Linear):
+            # layer is not replaced with peft layer yet
             # replace with peft module
             adapter_state_dict = {
                 param_name: state_dict.get(f"{full_name}.{param_name}")

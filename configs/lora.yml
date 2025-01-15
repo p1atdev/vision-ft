@@ -8,12 +8,13 @@ model:
     use_flash_attn: true
 
 peft:
-  type: lora
-  rank: 4
-  alpha: 1.0
-  dropout: 0.0
+  config:
+    type: lora
+    rank: 4
+    alpha: 1.0
+    dropout: 0.0
 
-  dtype: bfloat16
+    dtype: bfloat16
 
   include_keys:
     - "attn.w2"

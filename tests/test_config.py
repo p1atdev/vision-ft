@@ -11,9 +11,11 @@ def test_validate_config():
     assert config.trainer is not None
     assert config.trainer.debug_mode == "dataset"
 
-    peft = config.peft
-    assert peft is not None
-    assert peft.type == "lora"
-
-    assert isinstance(peft, LoRAConfig)
-    assert peft.rank == 8
+    target_config = config.peft
+    assert target_config is not None
+    assert isinstance(target_config, list)
+    if (peft_config := target_config[0].config) and isinstance(peft_config, LoRAConfig):
+        assert peft_config.type == "lora"
+        assert peft_config.rank == 8
+    else:
+        assert False, "Unexpected config type"
