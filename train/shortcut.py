@@ -31,7 +31,7 @@ from src.modules.loss.shortcut import (
     prepare_self_consistency_targets,
     get_shortcut_target_velocity,
 )
-from src.modules.timestep import TimestepSamplingType, timestep_randn
+from src.modules.timestep import TimestepSamplingType, sample_timestep
 from src.modules.peft import get_adapter_parameters
 from src.utils.logging import wandb_image
 
@@ -46,8 +46,10 @@ class DenoiserForShortcut(Denoiser):
     def reset_weights(self):
         self.shortcut_embedder = TimestepEmbedder(self.inner_dim)
         self.shortcut_embedder.to(torch.bfloat16)
-        nn.init.kaiming_uniform_(self.shortcut_embedder.mlp[0].weight)
-        nn.init.normal_(self.shortcut_embedder.mlp[0].bias)
+        # nn.init.kaiming_uniform_(self.shortcut_embedder.mlp[0].weight)
+        # nn.init.normal_(self.shortcut_embedder.mlp[0].bias)
+        nn.init.zeros_(self.shortcut_embedder.mlp[0].weight)
+        nn.init.zeros_(self.shortcut_embedder.mlp[0].bias)
         nn.init.zeros_(self.shortcut_embedder.mlp[2].weight)
         nn.init.zeros_(self.shortcut_embedder.mlp[2].bias)
 
@@ -56,7 +58,7 @@ class DenoiserForShortcut(Denoiser):
         latent: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
-        shortcut_exponent: torch.Tensor,
+        shortcut_duration: torch.Tensor,
     ) -> torch.Tensor:
         batch_size, _in_channels, height, width = latent.shape
 
@@ -69,7 +71,7 @@ class DenoiserForShortcut(Denoiser):
 
         # 1.5 global condition (timesteps)
         global_cond = self.t_embedder(timestep)
-        global_cond += self.shortcut_embedder(shortcut_exponent)
+        global_cond += self.shortcut_embedder(shortcut_duration)
 
         # 2. patchify
         patches = self.patchify(latent)
@@ -163,7 +165,7 @@ class AuraFlowForShortcut(AuraFlowModel):
         cfg_scale: float = 1.0,
         seed: int | None = None,
         max_token_length: int = 256,
-        do_shortcut: bool = False,
+        # do_shortcut: bool = False,
         device: torch.device | str = torch.device("cuda"),
     ) -> list[Image.Image]:
         # 1. Prepare args
@@ -214,18 +216,16 @@ class AuraFlowForShortcut(AuraFlowModel):
                     latent_model_input.shape[0]
                 )
                 batch_timestep = batch_timestep.to(latents.device, dtype=latents.dtype)
-                shortcut_exponent = (
-                    (torch.ones_like(batch_timestep) * math.log2(num_inference_steps))
-                    if do_shortcut
-                    else torch.zeros_like(batch_timestep)
+                batch_delta_timestep = torch.full_like(
+                    batch_timestep, fill_value=delta_timestep
                 )
 
                 # predict noise model_output
-                velocity_pred = self.denoiser(
+                velocity_pred = self.denoiser.forward(
                     latent=latent_model_input,
                     encoder_hidden_states=prompt_embeddings,
                     timestep=batch_timestep,
-                    shortcut_exponent=shortcut_exponent,
+                    shortcut_duration=batch_delta_timestep,
                 )
 
                 # perform cfg
@@ -252,6 +252,7 @@ class AuraFlowForShortcut(AuraFlowModel):
 class AuraFlowForShortcutConfig(AuraFlowConig):
     flow_matching_ratio: float = 0.75
     shortcut_max_steps: int = 128
+    shortcut_cfg_scale: float = 5.0
 
     timestep_sampling_type: TimestepSamplingType = "sigmoid"
 
@@ -259,7 +260,7 @@ class AuraFlowForShortcutConfig(AuraFlowConig):
 class PreparedTargets(NamedTuple):
     noisy_latents: torch.Tensor
     timesteps: torch.Tensor
-    shortcut_exponent: torch.Tensor
+    shortcut_duration: torch.Tensor
     prediction_target: torch.Tensor
 
 
@@ -278,7 +279,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
                 self.model.text_encoder.eval()
                 self.model.vae.eval()  # type: ignore
 
-            self.model._load_original_weights()
+            self.model._load_original_weights(strict=False)
 
             # init the shortcut embedder with zeros
             self.model.denoiser.reset_weights()
@@ -289,8 +290,13 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         for (
             name,
             param,
-        ) in self.model.denoiser.shortcut_embedder.mlp.named_parameters():
-            assert param.requires_grad is True
+        ) in self.model.denoiser.shortcut_embedder.named_parameters():
+            if "lora_" in name:
+                # if lora, must be trainable
+                assert param.requires_grad is True, (name, param, param.requires_grad)
+            else:
+                # not peft, then requires_grad should be True
+                assert param.requires_grad is (self.config.peft is None)
 
         latent = self.model.prepare_latents(
             batch_size=1,
@@ -306,20 +312,20 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
             device=self.accelerator.device,
         )
         timestep = torch.tensor([0.5], device=self.accelerator.device)
-        shortcut_exponent = torch.tensor([2.0], device=self.accelerator.device)
+        shortcut_duration = torch.tensor([0.5], device=self.accelerator.device)
 
         with torch.no_grad():
             with self.accelerator.autocast():
-                _noise_pred = self.model.denoiser(
+                _noise_pred = self.model.denoiser.forward(
                     latent=latent,
                     encoder_hidden_states=prompt,
                     timestep=timestep,
-                    shortcut_exponent=shortcut_exponent,
+                    shortcut_duration=shortcut_duration,
                 )
 
                 # initial shortcut_embedder's output should be zeros
                 assert (
-                    self.model.denoiser.shortcut_embedder(shortcut_exponent)
+                    self.model.denoiser.shortcut_embedder(shortcut_duration)
                     .max()
                     .item()
                     == 0.0
@@ -328,16 +334,36 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
     @torch.no_grad()
     def flow_matching_target(
         self,
-        pixel_values: torch.Tensor,
+        latents: torch.Tensor,
     ) -> PreparedTargets:
-        # 1. Prepare the inputs
-        with torch.no_grad():
-            latents = self.model.encode_image(pixel_values)
-            timesteps = timestep_randn(
-                latents_shape=latents.shape,
-                device=self.accelerator.device,
-                sampling_type=self.model_config.timestep_sampling_type,
+        if latents.size(0) == 0:
+            return PreparedTargets(
+                noisy_latents=latents,
+                timesteps=torch.tensor([], device=self.accelerator.device),
+                shortcut_duration=torch.tensor([], device=self.accelerator.device),
+                prediction_target=torch.tensor([], device=self.accelerator.device),
             )
+
+        # 1. Prepare the inputs
+        shortcut_max_steps = self.model_config.shortcut_max_steps
+        timesteps = (
+            # sample from [1/128, 2/128, ..., 128/128]
+            (
+                torch.randint(
+                    low=0,
+                    high=shortcut_max_steps,
+                    size=(latents.size(0),),
+                    device=self.accelerator.device,
+                ).float()
+                + 1  # 1~128
+            )
+            / shortcut_max_steps
+        )
+        # timesteps = sample_timestep(
+        #     latents_shape=latents.shape,
+        #     sampling_type=self.model_config.timestep_sampling_type,
+        #     device=self.accelerator.device,
+        # )
 
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(
@@ -345,7 +371,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
             timestep=timesteps,
         )
 
-        # 3. Create a flow matching target
+        # 3. Create a flow matching target (i.e. what we want the model to predict)
         targets = get_flow_match_target_velocity(
             latents=latents,
             random_noise=random_noise,
@@ -354,28 +380,35 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         return PreparedTargets(
             noisy_latents=noisy_latents,
             timesteps=timesteps,
-            shortcut_exponent=torch.zeros_like(timesteps),
+            shortcut_duration=torch.zeros_like(timesteps),
             prediction_target=targets,
         )
 
     @torch.no_grad()
     def shortcut_target(
         self,
-        pixel_values: torch.Tensor,
+        latents: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
     ) -> PreparedTargets:
+        if latents.size(0) == 0:
+            return PreparedTargets(
+                noisy_latents=latents,
+                timesteps=torch.tensor([], device=self.accelerator.device),
+                shortcut_duration=torch.tensor([], device=self.accelerator.device),
+                prediction_target=torch.tensor([], device=self.accelerator.device),
+            )
+
         # 1. Prepare the inputs
         (
             _inference_steps,
-            shortcut_exponent,  # 2 のべき乗の指数
+            _shortcut_exponent,  # 2 のべき乗の指数
             shortcut_duration,
             departure_timesteps,
         ) = prepare_random_shortcut_durations(
-            batch_size=pixel_values.size(0),
+            batch_size=latents.size(0),
             max_pow=int(math.log2(self.model_config.shortcut_max_steps)),
             device=self.accelerator.device,
         )
-        latents = self.model.encode_image(pixel_values)
 
         # 2 add noise
         noisy_latents, _random_noise = prepare_noised_latents(
@@ -388,9 +421,9 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
             denoiser=self.model.denoiser,
             latents=noisy_latents,
             encoder_hidden_states=encoder_hidden_states,
-            shortcut_exponent=shortcut_exponent,
             departure_timesteps=departure_timesteps,
             double_shortcut_duration=shortcut_duration,
+            cfg_scale=self.model_config.shortcut_cfg_scale,
         )
 
         target = get_shortcut_target_velocity(
@@ -401,7 +434,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         return PreparedTargets(
             noisy_latents=noisy_latents,
             timesteps=departure_timesteps,
-            shortcut_exponent=shortcut_exponent,
+            shortcut_duration=shortcut_duration,
             prediction_target=target,
         )
 
@@ -409,76 +442,71 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         pixel_values = batch["image"]
         caption = batch["caption"]
 
-        encoder_hidden_states = self.model.text_encoder.encode_prompts(
-            caption
-        ).positive_embeddings
+        with torch.no_grad():
+            encoder_hidden_states = self.model.text_encoder.encode_prompts(
+                caption
+            ).positive_embeddings
+            latents = self.model.encode_image(pixel_values)
 
-        batch_size = pixel_values.size(0)
-        # if less than the ratio, they are flow matching targets
-        # rest are shortcut targets
-        flow_match_mask = (
-            torch.randn(batch_size) <= self.model_config.flow_matching_ratio
-        )
+            batch_size = pixel_values.size(0)
+            # if less than the ratio, they are flow matching targets
+            # rest are shortcut targets
+            flow_match_mask = (
+                torch.rand(batch_size) <= self.model_config.flow_matching_ratio
+            )
 
-        # batch for flow matching targets
-        flow_match_pixel_values = pixel_values[flow_match_mask]
-
-        # batch for shortcut targets
-        shortcut_pixel_values = pixel_values[~flow_match_mask]
-        shortcut_encoder_hidden_states = encoder_hidden_states[~flow_match_mask]
-
-        targets, noisy_latents, timesteps, shortcut_exponents = [], [], [], []
-        if flow_match_pixel_values.size(0) > 0:
+            # 2. Prepare the targets
             flow_match = self.flow_matching_target(
-                pixel_values=flow_match_pixel_values,
+                latents=latents[flow_match_mask],
             )
-            targets.append(flow_match.prediction_target)
-            noisy_latents.append(flow_match.noisy_latents)
-            timesteps.append(flow_match.timesteps)
-            shortcut_exponents.append(flow_match.shortcut_exponent)
-
-        if shortcut_pixel_values.size(0) > 0:
             shortcut = self.shortcut_target(
-                pixel_values=shortcut_pixel_values,
-                encoder_hidden_states=shortcut_encoder_hidden_states,
+                latents=latents[~flow_match_mask],
+                encoder_hidden_states=encoder_hidden_states[~flow_match_mask],
             )
-            targets.append(shortcut.prediction_target)
-            noisy_latents.append(shortcut.noisy_latents)
-            timesteps.append(shortcut.timesteps)
-            shortcut_exponents.append(shortcut.shortcut_exponent)
 
-        # infer flow-matching and shortcut together
+        # 3. infer flow-matching and shortcut together
         prediction = self.model.denoiser.forward(
-            latent=torch.cat(noisy_latents),
+            latent=torch.cat([flow_match.noisy_latents, shortcut.noisy_latents]),
             encoder_hidden_states=torch.cat(
-                [encoder_hidden_states[flow_match_mask], shortcut_encoder_hidden_states]
+                [
+                    encoder_hidden_states[flow_match_mask],
+                    encoder_hidden_states[~flow_match_mask],
+                ]
             ),
-            timestep=torch.cat(timesteps),
-            shortcut_exponent=torch.cat(shortcut_exponents),
+            timestep=torch.cat([flow_match.timesteps, shortcut.timesteps]),
+            shortcut_duration=torch.cat(
+                [flow_match.shortcut_duration, shortcut.shortcut_duration]
+            ),
         )
 
-        # calculate the loss
+        # 4. calculate the loss
         loss_l2 = F.mse_loss(
             prediction,
-            torch.cat(targets).detach(),
+            torch.cat(
+                [
+                    flow_match.prediction_target,
+                    shortcut.prediction_target,
+                ]
+            ).detach(),
             reduction="none",
         )
         total_loss = loss_l2.mean()
 
         # for logging purposes
-        loss_dict = {
-            "flow_match": loss_l2[flow_match_mask].mean()
-            if flow_match_mask.any()
-            else None,
-            "shortcut": loss_l2[~flow_match_mask].mean()
-            if ~flow_match_mask.any()
-            else None,
-        }
+        with torch.no_grad():
+            loss_dict = {
+                "flow_match": loss_l2[: flow_match_mask.sum()].mean()
+                if flow_match_mask.any()
+                else None,
+                "shortcut": loss_l2[flow_match_mask.sum() :].mean()
+                if ~flow_match_mask.any()
+                else None,
+            }
 
-        self.log("train/loss", total_loss, on_step=True, on_epoch=True)
-        for key, value in loss_dict.items():
-            if value is not None:
-                self.log(f"train/{key}", value, on_step=True, on_epoch=True)
+            self.log("train/loss", total_loss, on_step=True, on_epoch=True)
+            for key, value in loss_dict.items():
+                if value is not None:
+                    self.log(f"train/{key}", value, on_step=True, on_epoch=True)
 
         return total_loss
 
@@ -495,7 +523,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         num_steps: int = batch["num_steps"]
         seed: int = batch["seed"]
         extra: dict = batch["extra"]
-        do_shortcut: bool = extra.get("do_shortcut", False)
+        # do_shortcut: bool = extra.get("do_shortcut", False)
 
         if negative_prompt is None and cfg_scale > 0:
             negative_prompt = ""
@@ -509,7 +537,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
                 cfg_scale=cfg_scale,
                 num_inference_steps=num_steps,
                 seed=seed,
-                do_shortcut=do_shortcut,
+                # do_shortcut=do_shortcut,
             )[0]
 
         self.log(
@@ -526,13 +554,6 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
             if self.config.trainer.gradient_checkpointing:
                 self.model.denoiser._set_gradient_checkpointing(True)
 
-            # make sure the shortcut embedder is not trainable
-            for (
-                _name,
-                param,
-            ) in self.model.denoiser.shortcut_embedder.mlp.named_parameters():
-                param.requires_grad_(True)
-
         super().after_setup_model()
 
     def get_state_dict_to_save(
@@ -545,6 +566,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
 
         for key, value in self.model.denoiser.shortcut_embedder.state_dict().items():
             assert isinstance(value, torch.Tensor)
+            # save the shortcut_embedder's state_dict
             state_dict[f"denoiser.shortcut_embedder.{key}"] = value
 
         state_dict = {convert_to_comfy_key(k): v for k, v in state_dict.items()}

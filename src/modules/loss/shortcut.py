@@ -36,12 +36,12 @@ def prepare_random_shortcut_durations(
     shortcut_duration = 1 / inference_steps  # 1/1, 1/2, ..., 1/64
 
     # random starting point for each step
-    random_departure_timesteps = 1 - (
+    random_departure_timesteps = (
         torch.cat(
             [
-                # random in from (1~0), (2~0), ..., (64~0)
+                # random in from (1~1), (1~2), ..., (1~64)
                 torch.randint(
-                    low=0, high=int(num_steps.item()), size=(1,), device=device
+                    low=1, high=int(num_steps.item()) + 1, size=(1,), device=device
                 )
                 for num_steps in inference_steps
             ]
@@ -83,37 +83,43 @@ def prepare_self_consistency_targets(
     denoiser: nn.Module,
     latents: torch.Tensor,  # noisy latents
     encoder_hidden_states: torch.Tensor,  # text encoder output
-    shortcut_exponent: torch.Tensor,
     departure_timesteps: torch.Tensor,
     double_shortcut_duration: torch.Tensor,  # 1/64, ... 1/2, 1/1 timestep duration
+    cfg_scale: float = 1.0,
 ):
     # 1. predict the first shortcut
-    first_shortcut = _get_shortcut_destination(
-        denoiser=denoiser,
-        latents=latents,
-        encoder_hidden_states=encoder_hidden_states,
-        current_timesteps=departure_timesteps,
-        # 1 / (2^(num_shortcut_steps + 1)) * 2 = 1 / (2^num_shortcut_steps)
-        # e.g.) 1/(2^3) * 2 = 1/8 * 2 = 1/(2^2) = 1/4
-        shortcut_exponent=shortcut_exponent + 1,
+    half_shortcut_duration = double_shortcut_duration / 2  # 1/128, 1/64, ..., 1/2
+    first_shortcut = (
+        _get_shortcut_destination(
+            denoiser=denoiser,
+            latents=latents,
+            encoder_hidden_states=encoder_hidden_states,
+            current_timesteps=departure_timesteps,
+            # 1 / (2^(num_shortcut_steps + 1)) * 2 = 1 / (2^num_shortcut_steps)
+            # e.g.) 1/(2^3) * 2 = 1/8 * 2 = 1/(2^2) = 1/4
+            shortcut_exponent=half_shortcut_duration,
+        )
+        * cfg_scale
     )
 
     # 2. predict the second shortcut
     # denoise with the first shortcut
-    half_shortcut_duration = double_shortcut_duration / 2  # 1/128, 1/64, ..., 1/2
     pseudo_midpoint = latents - (
         first_shortcut
         # [:, None, None, None] is for broadcasting (i.e. (B,) -> (B, 1, 1, 1))
         * half_shortcut_duration[:, None, None, None]
     )
-    second_shortcut = _get_shortcut_destination(
-        denoiser=denoiser,
-        latents=pseudo_midpoint,
-        encoder_hidden_states=encoder_hidden_states,
-        current_timesteps=(
-            departure_timesteps - half_shortcut_duration  # next timestep (1→0)
-        ),
-        shortcut_exponent=shortcut_exponent + 1,
+    second_shortcut = (
+        _get_shortcut_destination(
+            denoiser=denoiser,
+            latents=pseudo_midpoint,
+            encoder_hidden_states=encoder_hidden_states,
+            current_timesteps=(
+                departure_timesteps - half_shortcut_duration  # next timestep (1→0)
+            ),
+            shortcut_exponent=half_shortcut_duration,
+        )
+        * cfg_scale
     )
 
     # above is not in the backward graph
@@ -144,7 +150,7 @@ def loss_with_shortcut_self_consistency(
 
     # calculate the loss
     return F.mse_loss(
-        shortcut_velocity.detach(),
         double_shortcut,
+        shortcut_velocity.detach(),
         reduction="mean",
     )
