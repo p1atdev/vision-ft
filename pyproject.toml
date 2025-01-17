@@ -44,6 +44,7 @@ dev-dependencies = [
     "click>=8.1.7",
     "litserve>=0.2.5",
     "gradio>=5.9.1",
+    "seaborn>=0.13.2",
 ]
 no-build-isolation-package = ["flash-attn"]
 
