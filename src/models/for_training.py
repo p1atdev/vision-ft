@@ -126,14 +126,18 @@ class ModelForTraining(ABC, nn.Module):
         pass
 
     def after_backward(self):
-        if (
-            self.accelerator.sync_gradients
-            and self.config.trainer.clip_grad_norm is not None
-        ):
-            self.accelerator.clip_grad_norm_(
-                self.model.parameters(),
-                self.config.trainer.clip_grad_norm,
-            )
+        if self.accelerator.sync_gradients:
+            if self.config.trainer.clip_grad_norm is not None:
+                self.accelerator.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.config.trainer.clip_grad_norm,
+                )
+            if self.config.trainer.clip_grad_value is not None:
+                self.accelerator.clip_grad_value_(
+                    self.model.parameters(),
+                    self.config.trainer.clip_grad_value,
+                )
+
         self.optimizer.step()
         self.scheduler.step()
 

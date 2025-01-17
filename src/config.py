@@ -78,6 +78,7 @@ class TrainerConfig(BaseModel):
     gradient_accumulation_steps: int = 1
 
     clip_grad_norm: float | None = None
+    clip_grad_value: float | None = None
 
     # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
     fp32_matmul_precision: Literal["highest", "high", "medium"] | None = None
