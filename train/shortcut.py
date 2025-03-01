@@ -251,6 +251,7 @@ class AuraFlowForShortcut(AuraFlowModel):
 
 class AuraFlowForShortcutConfig(AuraFlowConig):
     flow_matching_ratio: float = 0.75
+    shortcut_min_steps: int = 1
     shortcut_max_steps: int = 128
     shortcut_cfg_scale: float = 5.0
 
@@ -272,6 +273,11 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
 
     def setup_model(self):
         if self.accelerator.is_main_process:
+            self.print("flow_matching_ratio:", self.model_config.flow_matching_ratio)
+            self.print("shortcut_min_steps:", self.model_config.shortcut_min_steps)
+            self.print("shortcut_max_steps:", self.model_config.shortcut_max_steps)
+            self.print("shortcut_cfg_scale:", self.model_config.shortcut_cfg_scale)
+
             with init_empty_weights():
                 self.model = AuraFlowForShortcut(self.model_config)
 
@@ -350,15 +356,15 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
             # sample from [1/128, 2/128, ..., 128/128]
             (
                 torch.randint(
-                    low=0,
-                    high=shortcut_max_steps,
+                    low=1,
+                    high=shortcut_max_steps + 1,
                     size=(latents.size(0),),
                     device=self.accelerator.device,
-                ).float()
-                + 1  # 1~128
+                ).float()  # 1~128
             )
-            / shortcut_max_steps
+            / shortcut_max_steps  # 1/128 ~ 128/128
         )
+        shortcut_duration = torch.full_like(timesteps, 1 / shortcut_max_steps)
         # timesteps = sample_timestep(
         #     latents_shape=latents.shape,
         #     sampling_type=self.model_config.timestep_sampling_type,
@@ -380,7 +386,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         return PreparedTargets(
             noisy_latents=noisy_latents,
             timesteps=timesteps,
-            shortcut_duration=torch.zeros_like(timesteps),
+            shortcut_duration=shortcut_duration,
             prediction_target=targets,
         )
 
@@ -406,6 +412,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
             departure_timesteps,
         ) = prepare_random_shortcut_durations(
             batch_size=latents.size(0),
+            min_pow=int(math.log2(self.model_config.shortcut_min_steps)),
             max_pow=int(math.log2(self.model_config.shortcut_max_steps)),
             device=self.accelerator.device,
         )
@@ -522,7 +529,7 @@ class AuraFlowForShortcutTraining(ModelForTraining, nn.Module):
         cfg_scale: float = batch["cfg_scale"]
         num_steps: int = batch["num_steps"]
         seed: int = batch["seed"]
-        extra: dict = batch["extra"]
+        # extra: dict = batch["extra"]
         # do_shortcut: bool = extra.get("do_shortcut", False)
 
         if negative_prompt is None and cfg_scale > 0:

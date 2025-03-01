@@ -16,26 +16,6 @@ def time_shift(mu: float, sigma: float, t: torch.Tensor):
     return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
 
 
-# ref: https://github.com/XLabs-AI/x-flux/blob/main/src/flux/sampling.py
-def flux_like_schedule(
-    num_steps: int,
-    image_seq_len: int,
-    base_shift: float = 0.5,
-    max_shift: float = 1.15,
-    shift: bool = True,
-):
-    # extra step for zero
-    timesteps = torch.linspace(1, 0, num_steps + 1)
-
-    # shifting the schedule to favor high timesteps for higher signal images
-    if shift:
-        # eastimate mu based on linear estimation between two points
-        mu = get_lin_function(y1=base_shift, y2=max_shift)(image_seq_len)
-        timesteps = time_shift(mu, 1.0, timesteps)
-
-    return timesteps.tolist()
-
-
 # ref: https://github.com/kohya-ss/sd-scripts/blob/e89653975ddf429cdf0c0fd268da0a5a3e8dba1f/library/flux_train_utils.py#L439-L448
 def flux_shift_randn(
     latents_shape: torch.Size,

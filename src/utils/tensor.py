@@ -84,3 +84,10 @@ def remove_orig_mod_prefix(name: str) -> str:
     Remove the "_orig_mod." prefix from the key
     """
     return name.replace("_orig_mod.", "", 1)
+
+
+def swap_seq_len_and_num_heads(
+    *args: torch.Tensor,
+) -> tuple[torch.Tensor, ...]:
+    # [batch_size, seq_len, num_heads, head_dim] -> [batch_size, num_heads, seq_len, head_dim]
+    return tuple(arg.transpose(1, 2) for arg in args)

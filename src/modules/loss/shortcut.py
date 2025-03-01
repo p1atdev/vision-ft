@@ -22,6 +22,21 @@ class ShortcutDuration(NamedTuple):
     departure_timesteps: torch.Tensor  # `bootstrap_timesteps` in the official code
 
 
+def sample_weighted_inference_step_exponent(
+    batch_size: int,
+    min_pow: int = 0,
+    max_pow: int = 7,
+    device: torch.device = torch.device("cuda"),
+) -> torch.Tensor:
+    exponents = torch.arange(start=min_pow, end=max_pow, device=device)
+
+    weights = exponents.float().sqrt()
+    probs = weights / weights.sum()
+
+    indices = torch.multinomial(probs, num_samples=batch_size, replacement=True)
+    return exponents[indices]
+
+
 def prepare_random_shortcut_durations(
     batch_size: int,
     min_pow: int = 0,
@@ -29,7 +44,9 @@ def prepare_random_shortcut_durations(
     device: torch.device = torch.device("cuda"),
 ) -> ShortcutDuration:
     # how many steps when we generate images
-    inference_exponent = torch.randint(min_pow, max_pow, (batch_size,), device=device)
+    inference_exponent = sample_weighted_inference_step_exponent(
+        batch_size, min_pow=min_pow, max_pow=max_pow, device=device
+    )
     inference_steps = 2**inference_exponent  # 2^0, 2^1, ..., 2^6 (= 1, 2, ..., 64)
 
     # how long duration to shortcut at each step
@@ -63,13 +80,13 @@ def _get_shortcut_destination(
     latents: torch.Tensor,
     encoder_hidden_states: torch.Tensor,
     current_timesteps: torch.Tensor,
-    shortcut_exponent: torch.Tensor,
+    shortcut_duration: torch.Tensor,
 ) -> torch.Tensor:
     return denoiser(
-        latents,
-        encoder_hidden_states,
-        current_timesteps,
-        shortcut_exponent,
+        latent=latents,
+        encoder_hidden_states=encoder_hidden_states,
+        timestep=current_timesteps,
+        shortcut_duration=shortcut_duration,
     )
 
 
@@ -97,7 +114,7 @@ def prepare_self_consistency_targets(
             current_timesteps=departure_timesteps,
             # 1 / (2^(num_shortcut_steps + 1)) * 2 = 1 / (2^num_shortcut_steps)
             # e.g.) 1/(2^3) * 2 = 1/8 * 2 = 1/(2^2) = 1/4
-            shortcut_exponent=half_shortcut_duration,
+            shortcut_duration=half_shortcut_duration,
         )
         * cfg_scale
     )
@@ -117,7 +134,7 @@ def prepare_self_consistency_targets(
             current_timesteps=(
                 departure_timesteps - half_shortcut_duration  # next timestep (1→0)
             ),
-            shortcut_exponent=half_shortcut_duration,
+            shortcut_duration=half_shortcut_duration,
         )
         * cfg_scale
     )

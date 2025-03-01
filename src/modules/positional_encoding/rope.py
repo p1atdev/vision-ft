@@ -78,6 +78,7 @@ def applye_rope_frequencies(
     inputs: torch.Tensor,  # (batch_size, num_heads, seq_len, dim)
     freqs: torch.Tensor,
 ) -> torch.Tensor:
+    inputs_dtype = inputs.dtype
     inputs = inputs.float()  # cast to float
     freqs = freqs.to(inputs.device)  # move to the same device
 
@@ -95,9 +96,31 @@ def applye_rope_frequencies(
             ],
             dim=-1,
         ).reshape(*inputs.shape)  # reshape to (batch_size, num_heads, seq_len, dim)
-    )
+    ).to(inputs_dtype)  # cast back to the original dtype
 
     return rotated_inputs
+
+
+def apply_rope_qk(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    rope_freqs: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Applies positional encoding to query and key tensors.
+
+    Args:
+        rope_freqs (torch.Tensor): the RoPE frequencies (seq_len, head_dim//2, 2)
+        q (torch.Tensor): Query tensor of shape (batch_size, seq_len, num_heads, head_dim)
+        k (torch.Tensor): Key tensor of shape (batch_size, seq_len, num_heads, head_dim)
+
+    Returns:
+        torch.Tensor: Query and key tensors with positional encoding applied.
+    """
+
+    q = applye_rope_frequencies(q, rope_freqs)
+    k = applye_rope_frequencies(k, rope_freqs)
+
+    return q, k
 
 
 class RoPEFrequency(nn.Module):
