@@ -5,16 +5,16 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
 
-from flash_attn import flash_attn_func
-
 import torch.utils.checkpoint
 from transformers.activations import ACT2FN
 
 from .config import DenoiserConfig
 from ...modules.positional_encoding.rope import (
-    applye_rope_frequencies,
     RoPEFrequency,
+    apply_rope_qk,
 )
+from ...modules.attention import scaled_qkv_attention
+from ...utils.tensor import swap_seq_len_and_num_heads
 
 # DEFAULT_DENOISER_CONFIG = {
 #     "attention_head_dim": 256,
@@ -30,6 +30,29 @@ from ...modules.positional_encoding.rope import (
 #     "sample_size": 64,
 # }
 DENOISER_TENSOR_PREFIX = "model."
+
+
+def sdpa_in_BNLD(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: float | None = None,
+    use_flash: bool = False,
+) -> torch.Tensor:
+    # auraflow uses (batch_size, seq_len, num_heads, head_dim),
+    # so we need to swap seq_len and num_heads before and after
+
+    q, k, v = swap_seq_len_and_num_heads(q, k, v)
+    attn = scaled_qkv_attention(
+        q,
+        k,
+        v,
+        scale=scale,
+        use_flash=use_flash,
+    )
+    attn = swap_seq_len_and_num_heads(attn)[0]  # only one tensor
+
+    return attn
 
 
 # Originaly written by AuraFlow team
@@ -67,92 +90,6 @@ def find_multiple(n: int, k: int) -> int:
     if n % k == 0:
         return n
     return n + k - (n % k)
-
-
-def scaled_qkv_attention(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    scale: float | None = None,
-    use_flash: bool = False,
-    attention_dtype: torch.dtype = torch.bfloat16,  # float16 or bfloat16
-) -> torch.Tensor:
-    """Computes scaled dot-product attention between query, key and value tensors.
-
-    This function implements the attention mechanism described in the "Attention Is All You Need"
-    paper, with optional support for Flash Attention optimization.
-
-    Args:
-        q (torch.Tensor): Query tensor of shape (batch_size, seq_len, num_heads, head_dim)
-        k (torch.Tensor): Key tensor of shape (batch_size, seq_len, num_heads, head_dim)
-        v (torch.Tensor): Value tensor of shape (batch_size, seq_len, num_heads, head_dim)
-        scale (float, optional): Scaling factor for the dot product attention. If None, uses default scaling.
-        use_flash (bool, optional): Whether to use Flash Attention optimization. Defaults to False.
-
-    Returns:
-        torch.Tensor: Output tensor of shape (batch_size, seq_len, num_heads, head_dim)
-
-    Notes:
-        When use_flash=True, uses the Flash Attention implementation for better memory efficiency.
-        Otherwise, uses PyTorch's scaled_dot_product_attention with appropriate tensor permutations.
-    """
-    assert (
-        q.dim() == k.dim() == v.dim() == 4
-    )  # must be (batch_size, seq_len, num_heads, head_dim)
-
-    if q.dtype == torch.float32:
-        q, k, v = (
-            q.to(attention_dtype),
-            k.to(attention_dtype),
-            v.to(attention_dtype),
-        )
-    if use_flash:
-        output = flash_attn_func(
-            q,
-            k,
-            v,
-            dropout_p=0.0,
-            causal=False,
-            softmax_scale=scale,
-        )
-        assert isinstance(output, torch.Tensor)
-        return output
-    else:
-        return F.scaled_dot_product_attention(
-            # sdpa requires (batch_size, num_heads, seq_len, head_dim)
-            q.permute(0, 2, 1, 3),
-            k.permute(0, 2, 1, 3),
-            v.permute(0, 2, 1, 3),
-            dropout_p=0.0,
-            is_causal=False,
-            scale=scale,
-        ).permute(0, 2, 1, 3)  # back to (batch_size, seq_len, num_heads, head_dim)
-
-
-def apply_rope_qk(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    rope_freqs: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Applies positional encoding to query and key tensors.
-
-    Args:
-        rope_freqs (torch.Tensor): the RoPE frequencies (seq_len, head_dim//2, 2)
-        q (torch.Tensor): Query tensor of shape (batch_size, seq_len, num_heads, head_dim)
-        k (torch.Tensor): Key tensor of shape (batch_size, seq_len, num_heads, head_dim)
-
-    Returns:
-        torch.Tensor: Query and key tensors with positional encoding applied.
-    """
-
-    q, k = q.transpose(1, 2), k.transpose(1, 2)  # swap seq_len and num_heads
-
-    q = applye_rope_frequencies(q, rope_freqs)
-    k = applye_rope_frequencies(k, rope_freqs)
-
-    q, k = q.transpose(1, 2), k.transpose(1, 2)  # swap back
-
-    return q, k
 
 
 class AuraMLP(nn.Module):
@@ -256,10 +193,12 @@ class SingleAttention(nn.Module):
         # 1.5 apply RoPE
         if self.use_rope is not None:
             if isinstance(rope_freqs, torch.Tensor):
+                q, k = swap_seq_len_and_num_heads(q, k)
                 q, k = apply_rope_qk(q, k, rope_freqs)
+                q, k = swap_seq_len_and_num_heads(q, k)
 
         # 2. attention
-        output = scaled_qkv_attention(
+        output = sdpa_in_BNLD(
             q,
             k,
             v,
@@ -369,10 +308,12 @@ class DoubleAttention(nn.Module):
         # 1.5 apply RoPE
         if self.use_rope is not None:
             if isinstance(rope_freqs, torch.Tensor):
+                q, k = swap_seq_len_and_num_heads(q, k)
                 q, k = apply_rope_qk(q, k, rope_freqs)
+                q, k = swap_seq_len_and_num_heads(q, k)
 
         # 2. attention
-        output = scaled_qkv_attention(
+        output = sdpa_in_BNLD(
             q,
             k,
             v,

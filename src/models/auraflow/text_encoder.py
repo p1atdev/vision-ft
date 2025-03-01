@@ -70,12 +70,6 @@ class TextEncoder(nn.Module):
         self.model = model
         self.tokenizer = tokenizer
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name: str):
-        model = AutoModel.from_pretrained(pretrained_model_name)
-        tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name)
-
-        return cls(model, tokenizer)
 
     def _load_from_state_dict(
         self,
