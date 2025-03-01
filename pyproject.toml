@@ -1,5 +1,5 @@
 [project]
-name = "auraflow-ft"
+name = "vision-ft"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -30,6 +30,7 @@ dependencies = [
     "imagesize>=1.4.1",
     "cheesechaser>=0.2.2",
     "huggingface-dl>=0.0.2",
+    "polars>=1.23.0",
 ]
 
 [tool.uv]
