@@ -76,9 +76,7 @@ def test_replace_lora_linear():
     inputs = torch.randn(1, 10, dtype=torch.float16)
     original_output = model(inputs)
 
-    config.replace_to_peft_layer(
-        model,
-    )
+    config.replace_to_peft_layer(model, freeze_base=True)
 
     assert isinstance(model.layer1[0], LoRALinear)
     assert model.layer1[0].lora_down.weight.T.shape == torch.Size([10, 4])
@@ -104,7 +102,7 @@ def test_replace_lora_linear():
         if "lora_" in name:
             assert param.requires_grad is True
         else:
-            assert param.requires_grad is False
+            assert param.requires_grad is False, name
 
     adapter_params = get_adapter_parameters(model)
     assert (

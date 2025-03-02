@@ -35,10 +35,13 @@ class PeftTargetConfig(BaseModel):
             raise ValueError("include_keys must not be empty")
         return v
 
-    def replace_to_peft_layer(self, model: nn.Module) -> None:
+    def replace_to_peft_layer(
+        self, model: nn.Module, freeze_base: bool = False
+    ) -> None:
         replace_to_peft_layer(
             model,
             self.include_keys,
             self.exclude_keys,
             self.config,
+            freeze_base=freeze_base,
         )

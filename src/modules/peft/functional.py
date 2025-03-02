@@ -72,12 +72,16 @@ def replace_to_peft_layer(
     include_keys: list[str | RegexMatch],
     exclude_keys: list[str | RegexMatch],
     config: PeftConfigMixin,
+    freeze_base: bool = False,
 ) -> None:
     target_keys = get_target_keys(
         include_keys,
         exclude_keys,
         [name for name, _ in model.named_modules()],
     )
+    if freeze_base:
+        for name, module in model.named_modules():
+            module.requires_grad_(False)
     _replace_to_peft_layer(model, config, target_keys)
 
 
