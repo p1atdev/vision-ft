@@ -9,11 +9,12 @@ import torch.utils.checkpoint as checkpoint
 from flash_attn import flash_attn_func
 
 AttentionImplementation = Literal[
-    "torch",
+    "eager",
     "flash_attention_2",
 ]
 
 
+@DeprecationWarning
 def scaled_qkv_attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -76,9 +77,54 @@ def scaled_qkv_attention(
         )
 
 
+def scaled_dot_product_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: float | None = None,
+    backend: AttentionImplementation = "eager",
+    attention_dtype: torch.dtype = torch.bfloat16,  # float16 or bfloat16
+    is_causal: bool = False,
+) -> torch.Tensor:
+    assert (
+        q.dim() == k.dim() == v.dim() == 4
+    )  # must be (batch_size, seq_len or num_heads, head_dim)
+
+    if q.dtype == torch.float32:
+        q, k, v = (
+            q.to(attention_dtype),
+            k.to(attention_dtype),
+            v.to(attention_dtype),
+        )
+
+    if backend == "eager":
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=0.0,
+            is_causal=is_causal,
+            scale=scale,
+        )
+
+    if backend == "flash_attention_2":
+        output = flash_attn_func(
+            q.permute(0, 2, 1, 3),
+            k.permute(0, 2, 1, 3),
+            v.permute(0, 2, 1, 3),
+            dropout_p=0.0,
+            causal=is_causal,
+            softmax_scale=scale,
+        )
+        assert isinstance(output, torch.Tensor)
+        return output.permute(0, 2, 1, 3)
+
+    raise ValueError(f"Unknown backend: {backend}")
+
+
 def get_attn_implementation_label(
     use_flash_attention: bool,
-) -> str:
+) -> AttentionImplementation:
     # for transformers' models
     if use_flash_attention:
         return "flash_attention_2"

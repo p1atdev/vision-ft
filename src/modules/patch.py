@@ -1,8 +1,20 @@
+from typing import NamedTuple
+
 import torch
 import torch.nn as nn
 
 
-def patchify(image: torch.Tensor, patch_size: int) -> torch.Tensor:
+class PatchifyOutput(NamedTuple):
+    patches: torch.Tensor
+    latent_height: int
+    latent_width: int
+
+
+class UnpatchifyOutput(NamedTuple):
+    image: torch.Tensor
+
+
+def patchify(image: torch.Tensor, patch_size: int) -> PatchifyOutput:
     """
     Converts an image tensor into patches.
 
@@ -15,13 +27,15 @@ def patchify(image: torch.Tensor, patch_size: int) -> torch.Tensor:
     """
     batch_size, channels, height, width = image.shape
 
+    latent_height, latent_width = height // patch_size, width // patch_size
+
     # Reshape image into patches
     patches = image.view(
         batch_size,
         channels,
-        height // patch_size,
+        latent_height,
         patch_size,
-        width // patch_size,
+        latent_width,
         patch_size,
     )
 
@@ -29,11 +43,15 @@ def patchify(image: torch.Tensor, patch_size: int) -> torch.Tensor:
     patches = patches.permute(0, 2, 4, 1, 3, 5)  # [B, H, W, C, P_H, P_W]
     patches = patches.reshape(
         batch_size,
-        (height // patch_size) * (width // patch_size),  # Merge height and width
+        (latent_height) * (latent_width),  # Merge height and width
         patch_size * patch_size * channels,  # Merge channels and patch dims
     )
 
-    return patches
+    return PatchifyOutput(
+        patches=patches,
+        latent_height=latent_height,
+        latent_width=latent_width,
+    )
 
 
 def unpatchify(
@@ -42,7 +60,7 @@ def unpatchify(
     latent_width: int,
     patch_size: int,
     out_channels: int,
-) -> torch.Tensor:
+) -> UnpatchifyOutput:
     """
     Reconstructs the original image from a tensor of patches.
 
@@ -78,7 +96,8 @@ def unpatchify(
         latent_height * patch_size,
         latent_width * patch_size,
     )
-    return output
+
+    return UnpatchifyOutput(image=output)
 
 
 class ImagePatcher(nn.Module):
@@ -92,7 +111,7 @@ class ImagePatcher(nn.Module):
         self.patch_size = patch_size
         self.out_channels = out_channels
 
-    def patchify(self, image: torch.Tensor) -> torch.Tensor:
+    def patchify(self, image: torch.Tensor) -> PatchifyOutput:
         """
         Converts an image tensor into patches.
 
@@ -100,7 +119,7 @@ class ImagePatcher(nn.Module):
             image: Input image tensor with shape (batch_size, channels, height, width)
 
         Returns:
-            Tensor of patches with shape (batch_size, num_vertical_patches*num_horizontal_patches, patch_size*patch_size*channels)
+            Tensor of patches with shape (batch_size, num_vertical_patches x num_horizontal_patches, patch_size x patch_size x channels)
         """
 
         return patchify(image, self.patch_size)
@@ -110,17 +129,17 @@ class ImagePatcher(nn.Module):
         patches: torch.Tensor,
         latent_height: int,
         latent_width: int,
-    ) -> torch.Tensor:
+    ) -> UnpatchifyOutput:
         """
         Reconstructs the original image from a tensor of patches.
 
         Args:
-            patches: Tensor of patches with shape (batch_size, latent_height*latent_width, patch_size*patch_size*channels)
+            patches: Tensor of patches with shape (batch_size, latent_height x latent_width, patch_size x patch_size x channels)
             latent_height: Number of patches in the vertical direction
             latent_width: Number of patches in the horizontal direction
 
         Returns:
-            Reconstructed image tensor with shape (batch_size, channels, height*patch_size, width*patch_size)
+            Reconstructed image tensor with shape (batch_size, channels, height x patch_size, width x patch_size)
 
         """
 
@@ -137,4 +156,4 @@ class ImagePatcher(nn.Module):
         )
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        return self.patchify(image)
+        return self.patchify(image).patches
