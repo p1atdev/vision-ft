@@ -31,6 +31,8 @@ dependencies = [
     "cheesechaser>=0.2.2",
     "huggingface-dl>=0.0.2",
     "polars>=1.23.0",
+    "huggingface-hub>=0.29.1",
+    "liger-kernel>=0.5.4",
 ]
 
 [tool.uv]
@@ -63,6 +65,7 @@ torchvision = [
     { index = "pytorch-cu124", marker = "platform_system != 'Darwin'" },
 ]
 huggingface-dl = { git = "https://github.com/p1atdev/huggingface_dl" }
+diffusers = { git = "https://github.com/huggingface/diffusers" }
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
