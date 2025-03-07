@@ -304,8 +304,8 @@ def quantize_state_dict(
         exclude_keys,
         list(state_dict.keys()),
     )
-
-    if not (quant_type == "bnb_nf4" or quant_type == "bnb_fp4"):
+    supported_quant_types = ["bnb_nf4", "bnb_fp4", "fp8_e4m3fn"]
+    if quant_type not in supported_quant_types:
         raise NotImplementedError("Only bitsandbytes 4bit quantization is supported")
 
     for key in list(state_dict.keys()):
@@ -320,4 +320,6 @@ def quantize_state_dict(
             state_dict[key] = tensor.cpu()
             for state_key, state_value in state.as_dict(packed=True).items():
                 state_dict[f"{key}.{state_key}"] = state_value
+        elif quant_type == "fp8_e4m3fn":
+            state_dict[key] = state_dict[key].to(torch.float8_e4m3fn)
     return state_dict

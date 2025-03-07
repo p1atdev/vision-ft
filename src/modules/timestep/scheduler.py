@@ -25,7 +25,9 @@ def get_flux_schedule(
 def get_linear_schedule(
     num_steps: int,
     execution_device: torch.device,
-) -> list[float]:
-    timesteps = torch.linspace(1, 0, num_steps, device=execution_device)
+    start: float = 1.0,
+    end: float = 0.0,
+) -> torch.Tensor:
+    timesteps = torch.linspace(start, end, num_steps, device=execution_device)
 
-    return timesteps.tolist()
+    return timesteps

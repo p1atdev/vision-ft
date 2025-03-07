@@ -54,6 +54,9 @@ def patchify(image: torch.Tensor, patch_size: int) -> PatchifyOutput:
     )
 
 
+# ** TODO: the name of latent_height and latent_width are very confusing
+# *        because they are not real latent size, and they must be divided by patch_size.
+# *        we should rename them or change the implementation to make it more clear.
 def unpatchify(
     patches: torch.Tensor,
     latent_height: int,

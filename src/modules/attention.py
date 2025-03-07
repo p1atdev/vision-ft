@@ -1,4 +1,5 @@
 from typing import Literal
+import warnings
 
 import torch
 import torch.nn as nn
@@ -14,7 +15,6 @@ AttentionImplementation = Literal[
 ]
 
 
-@DeprecationWarning
 def scaled_qkv_attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -43,6 +43,8 @@ def scaled_qkv_attention(
         When use_flash=True, uses the Flash Attention implementation for better memory efficiency.
         Otherwise, uses PyTorch's scaled_dot_product_attention.
     """
+    warnings.warn("This function is deprecated and will be removed")
+
     assert (
         q.dim() == k.dim() == v.dim() == 4
     )  # must be (batch_size, seq_len or num_heads, head_dim)

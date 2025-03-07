@@ -16,6 +16,14 @@ def time_shift(mu: float, sigma: float, t: torch.Tensor):
     return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
 
 
+# https://github.com/huggingface/diffusers/blob/24c062aaa19f5626d03d058daf8afffa2dfd49f7/src/diffusers/schedulers/scheduling_flow_match_euler_discrete.py#L529
+def time_shift_linear(mu: float, t: torch.Tensor):
+    """
+    Used by CogView4
+    """
+    return mu / (mu + (1 / t - 1))
+
+
 # ref: https://github.com/kohya-ss/sd-scripts/blob/e89653975ddf429cdf0c0fd268da0a5a3e8dba1f/library/flux_train_utils.py#L439-L448
 def flux_shift_randn(
     latents_shape: torch.Size,

@@ -2,18 +2,24 @@ import torch
 import torch.nn as nn
 
 
-def image_position_indices(height: int, width: int):
-    pos_idx = torch.zeros(height // 2, width // 2, 3)
+def image_position_indices(
+    height: int, width: int, rope_dim: int = 3, y_index: int = 1, x_index: int = 2
+) -> torch.Tensor:
+    pos_idx = torch.zeros(height // 2, width // 2, rope_dim)
     # we're going to make a repeat of (zero, y, x) format
 
     # y position [[0], [1], [2], ... [height // 2]]
-    pos_idx[..., 1] = pos_idx[..., 1] + torch.arange(height // 2).unsqueeze(-1)
+    pos_idx[..., y_index] = pos_idx[..., y_index] + torch.arange(height // 2).unsqueeze(
+        -1
+    )
 
     # x position [[0, 1, 2, ... width // 2]]
-    pos_idx[..., 2] = pos_idx[..., 2] + torch.arange(width // 2).unsqueeze(0)
+    pos_idx[..., x_index] = pos_idx[..., x_index] + torch.arange(width // 2).unsqueeze(
+        0
+    )
 
     # flatten
-    pos_idx = pos_idx.reshape(-1, 3)
+    pos_idx = pos_idx.reshape(-1, rope_dim)
 
     # (height // 2) x (width // 2) x 3 size tensor
     # (zero, y, x) format
@@ -29,7 +35,7 @@ def image_position_indices(height: int, width: int):
 def _get_rope_frequencies(
     position_indices: torch.Tensor,  # (height//2 * width//2,)
     dim: int,  # positional encoding dimension (16 or 56)
-    theta: int,  # the rope theta (normally 10000)
+    theta: float,  # the rope theta (normally 10000)
 ) -> torch.Tensor:
     assert dim % 2 == 0, "dim must be even"
 
@@ -55,11 +61,11 @@ def _get_rope_frequencies(
 def get_rope_frequencies(
     position_indices: torch.Tensor,  # (height//2 * width//2, n_axes)
     dim_sizes: list[int],  # positional encoding dimension ([16, 56, 56])
-    theta: int,  # the rope theta (normally 10000)
+    theta: float,  # the rope theta (normally 10000)
 ) -> torch.Tensor:
-    assert (
-        len(dim_sizes) == position_indices.shape[-1]
-    ), "dim_sizes must have the same length as position_indices.shape[-1]"
+    assert len(dim_sizes) == position_indices.shape[-1], (
+        "dim_sizes must have the same length as position_indices.shape[-1]"
+    )
 
     # get each axes frequencies
     freqs = torch.cat(
@@ -85,6 +91,10 @@ def applye_rope_frequencies(
     # get cos and sin
     cos, sin = freqs.chunk(2, dim=-1)
     cos, sin = cos.squeeze(-1), sin.squeeze(-1)
+
+    print("inputs", inputs.shape)
+    print("cos", cos.shape)
+    print("sin", sin.shape)
 
     rotated_inputs = (
         # ↓ (batch_size, num_heads, seq_len, dim//2, 2)
@@ -127,7 +137,7 @@ class RoPEFrequency(nn.Module):
     def __init__(
         self,
         dim_sizes: list[int],
-        theta: int,
+        theta: float,
     ):
         super().__init__()
 
@@ -136,8 +146,12 @@ class RoPEFrequency(nn.Module):
 
         self.device = torch.device("cpu")
 
-    def get_image_position_indices(self, height: int, width: int) -> torch.Tensor:
-        return image_position_indices(height, width)
+    def get_image_position_indices(
+        self, height: int, width: int, y_index: int = 1, x_index: int = 2
+    ) -> torch.Tensor:
+        return image_position_indices(
+            height, width, len(self.dim_sizes), y_index, x_index
+        )
 
     def get_text_position_indices(self, seq_len: int) -> torch.Tensor:
         return torch.zeros(seq_len, len(self.dim_sizes))
