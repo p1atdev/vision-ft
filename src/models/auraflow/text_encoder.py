@@ -13,6 +13,9 @@ from transformers import (
     UMT5Config,
 )
 
+from ..utils import PromptType, TextEncodingOutput
+
+
 DEFAULT_TEXT_ENCODER_CONFIG = {
     "architectures": ["UMT5EncoderModel"],
     "classifier_dropout": 0.0,
@@ -49,16 +52,6 @@ DEFAULT_TOKENIZER_REPO = "fal/AuraFlow-v0.3"
 DEFAULT_TOKENIZER_FOLDER = "tokenizer"
 DEFAULT_MAX_TOKEN_LENGTH = 256
 
-PromptType: TypeAlias = str | list[str]
-
-
-@dataclass
-class TextEncodingOutput:
-    positive_embeddings: torch.Tensor
-    positive_attention_mask: torch.Tensor
-    negative_embeddings: torch.Tensor
-    negative_attention_mask: torch.Tensor
-
 
 class TextEncoder(nn.Module):
     model: PreTrainedModel
@@ -69,7 +62,6 @@ class TextEncoder(nn.Module):
 
         self.model = model
         self.tokenizer = tokenizer
-
 
     def _load_from_state_dict(
         self,
