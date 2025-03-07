@@ -1,6 +1,5 @@
 from typing import NamedTuple
 import warnings
-import math
 
 import torch
 import torch.nn as nn
@@ -17,6 +16,8 @@ from ...modules.timestep.embedding import (
     TextTimestampEmbedding,
     get_timestep_embedding,
 )
+from ...modules.offload import OffloadableModuleMixin
+
 from .config import DenoiserConfig
 
 # mostly from https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_cogview4.py
@@ -534,7 +535,7 @@ class FinalAdaLayerNorm(nn.Module):
         return hidden_states
 
 
-class CogView4DiT(nn.Module):
+class CogView4DiT(nn.Module, OffloadableModuleMixin):
     def __init__(
         self,
         patch_size: int = 2,
@@ -600,18 +601,6 @@ class CogView4DiT(nn.Module):
 
         self.gradient_checkpointing = False
 
-    # def default_size_conditions(self, latent: torch.Tensor) -> tuple[torch.Tensor, ...]:
-    #     batch_size, _channels, height, width = latent.shape
-
-    #     target_size = (
-    #         torch.tensor([height, width], device=latent.device)
-    #         * self.vae_compression_ratio
-    #     ).repeat(batch_size, 1)
-    #     original_size = target_size  # same as target size
-    #     crop_coords = torch.zeros_like(target_size)  # no crop
-
-    #     return original_size, target_size, crop_coords
-
     def patchify(self, latent: torch.Tensor) -> PatchifyOutput:
         return patchify(latent, self.patch_size)
 
@@ -639,44 +628,55 @@ class CogView4DiT(nn.Module):
 
         # 1. patchify and project
         patches = self.patchify(latent).patches
-        hidden_states, encoder_hidden_states = self.patch_embed(
-            patches, encoder_hidden_states
-        )
+        with self.maybe_on_execution_device(self.patch_embed):
+            hidden_states, encoder_hidden_states = self.patch_embed(
+                patches, encoder_hidden_states
+            )
 
         # 2. prepare RoPE
         rope_freqs = self.rope(latent)
 
         # 3. global condition embedding
         # global condition embedding, including timestep and image sizes
-        global_cond = self.time_condition_embed(
-            timestep,
-            original_size,
-            target_size,
-            crop_coords,
-            hidden_states.dtype,
-        )
+        with self.maybe_on_execution_device(self.time_condition_embed):
+            global_cond = self.time_condition_embed(
+                timestep,
+                original_size,
+                target_size,
+                crop_coords,
+                hidden_states.dtype,
+            )
 
         # 4. transformer blocks!
-        for block in self.transformer_blocks:
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states, encoder_hidden_states = checkpoint.checkpoint(  # type: ignore
-                    block,
-                    hidden_states,
-                    encoder_hidden_states,
-                    global_cond,
-                    rope_freqs,
-                )
-            else:
-                hidden_states, encoder_hidden_states = block(
-                    hidden_states,
-                    encoder_hidden_states,
-                    global_cond,
-                    rope_freqs,
-                )
+        with self.on_temporarily_another_device(modules=list(self.transformer_blocks)):
+            for i, block in enumerate(self.transformer_blocks):
+                if self.offload_strategy is not None:
+                    self.maybe_offload_by_group(
+                        list(self.transformer_blocks),
+                        current_index=i,
+                    )
+
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    hidden_states, encoder_hidden_states = checkpoint.checkpoint(  # type: ignore
+                        block,
+                        hidden_states,
+                        encoder_hidden_states,
+                        global_cond,
+                        rope_freqs,
+                    )
+                else:
+                    hidden_states, encoder_hidden_states = block(
+                        hidden_states,
+                        encoder_hidden_states,
+                        global_cond,
+                        rope_freqs,
+                    )
 
         # 5. final layer
-        hidden_states = self.norm_out(hidden_states, global_cond)
-        hidden_states = self.proj_out(hidden_states)
+        with self.maybe_on_execution_device(self.norm_out):
+            hidden_states = self.norm_out(hidden_states, global_cond)
+        with self.maybe_on_execution_device(self.proj_out):
+            hidden_states = self.proj_out(hidden_states)
 
         # 6. unpatchfy
         latent = self.unpatchify(hidden_states, height, width).image

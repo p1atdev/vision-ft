@@ -288,15 +288,15 @@ class CogView4ModelForInference(nn.Module):
         )
 
         # 4. Denoising loop
-        if do_offloading:
+        if do_offloading and self.denoiser.offload_strategy is None:
             self.denoiser.to(execution_device)
-        latents = latents.to(self.denoiser.device)
+        latents = latents.to(execution_device)
         prompt_embeddings = torch.cat(
             [
                 encoder_output.positive_embeddings,
                 encoder_output.negative_embeddings,
             ]
-        ).to(self.denoiser.device)
+        ).to(execution_device)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # current_timestep is 1000.0 -> 1.0
             for i, current_timestep in enumerate(timesteps):
