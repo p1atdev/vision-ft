@@ -1,36 +1,27 @@
-# AuraFlow finetuning scripts
+# Vision model finetuning scripts
 
 WIP
 
 ## Features
 
-(planned)
-
-- [NF4 model](https://huggingface.co/p1atdev/AuraFlow-v0.3-bnb-nf4) loading 
+- NF4 model loading 
 - QLoRA with bitsandbytes
 - [Flash Attention](https://github.com/Dao-AILab/flash-attention) support
 - Aspect ratio bucketing
+
+### Models
+
+- [x] AuraFlow
+- [ ] Flux & Flex (WIP)
+- [ ] CogView4 (WIP)
+- [ ] FractalGen (TODO)
+- [ ] Wan 2.1 (TODO)
 
 ## Setup
 
 ```bash
 uv sync
 ```
-
-## Train
-
-Distributed training is not tested yet.
-
-Simplest example:
-
-```bash
-accelerate launch \
-    ./main.py \
-    --config ./configs/lora.yaml
-```
-
-> [!WARNING]
-> This may be changed in the future.
 
 
 ## References
@@ -39,6 +30,9 @@ accelerate launch \
   - Heavily inspired by this repository.
 
 - https://github.com/cloneofsimo/minRF
+- https://github.com/huggingface/diffusers
+- https://github.com/Stability-AI/sd3-ref
+- https://github.com/black-forest-labs/flux
   - Model implementation
 
 - https://github.com/microsoft/LoRA
@@ -47,6 +41,7 @@ accelerate launch \
 
 - https://github.com/huggingface/diffusers
 - https://github.com/Lightning-AI/pytorch-lightning
+- https://github.com/ostris/ai-toolkit
   - Traning cycle and API design
 
 - https://github.com/NovelAI/novelai-aspect-ratio-bucketing
