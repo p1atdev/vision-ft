@@ -212,9 +212,9 @@ class AuraFlowForRoPEMigrationTraining(ModelForTraining, nn.Module):
 
     def setup_model(self):
         if self.accelerator.is_main_process:
-            assert (
-                self.model_config.denoiser.use_rope
-            ), "This model is not for positional attention training"
+            assert self.model_config.denoiser.use_rope, (
+                "This model is not for positional attention training"
+            )
             with init_empty_weights():
                 self.model = AuraFlowForRoPEMigration(self.model_config)
 
