@@ -13,8 +13,8 @@ from src.modules.quant import (
     QuantoLinear,
 )
 from src.modules.quant.functional import (
-    collect_children_keys,
-    get_quant_type_from_children_keys,
+    collect_children_dict,
+    get_quant_type_from_children_dict,
 )
 
 
@@ -23,35 +23,51 @@ def test_collect_children_keys():
         # prefix, keys, expected
         (
             "abc.def.",
-            ["abc.def.0", "abc.def.1", "abc.def.2", "abc.ooo"],
+            {
+                "abc.def.0": torch.zeros(1),
+                "abc.def.1": torch.zeros(1),
+                "abc.def.2": torch.zeros(1),
+                "abc.ooo": torch.zeros(1),
+            },
             ["0", "1", "2"],
         ),
         (
             "abc.def.",
-            ["abc.def.ghi.jkl"],
+            {"abc.def.ghi.jkl": torch.zeros(1)},
             ["ghi.jkl"],
         ),
         (
             "abc.def.",
-            ["XYZ"],
+            {"XYZ": torch.zeros(1)},
             [],
         ),
     ]
 
-    for prefix, keys, expected in cases:
-        assert collect_children_keys(prefix, keys) == expected
+    for prefix, state_dict, expected in cases:
+        assert set(collect_children_dict(prefix, state_dict).keys()) == set(expected)
 
 
 def test_get_quant_type_from_children_keys():
     cases = [
         # keys, expected
-        (["absmax", "quant_state.bitsandbytes__nf4"], "bnb_nf4"),
-        (["quant_map", "quant_state.bitsandbytes__fp4"], "bnb_fp4"),
-        (["weight_format"], "bnb_int8"),
+        (
+            {"absmax": torch.zeros(1), "quant_state.bitsandbytes__nf4": torch.zeros(1)},
+            "bnb_nf4",
+        ),
+        (
+            {
+                "quant_map": torch.zeros(1),
+                "quant_state.bitsandbytes__fp4": torch.zeros(1),
+            },
+            "bnb_fp4",
+        ),
+        ({"weight_format": torch.zeros(1)}, "bnb_int8"),
+        ({"_data": torch.zeros(1, dtype=torch.int8)}, "quanto_int8"),
+        ({"_data._data": torch.zeros(1, dtype=torch.uint8)}, "quanto_int4"),
     ]
 
     for keys, expected in cases:
-        assert get_quant_type_from_children_keys(keys) == expected
+        assert get_quant_type_from_children_dict(keys) == expected
 
 
 @torch.no_grad()
