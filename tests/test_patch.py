@@ -25,7 +25,7 @@ def test_auto_patchify_image():
 
         image = torch.rand(batch_size, channels, height, width)
 
-        patches = patchify(image, patch_size)
+        patches = patchify(image, patch_size).patches
         assert patches.shape == (
             batch_size,
             (height // patch_size) * (width // patch_size),
@@ -36,7 +36,8 @@ def test_auto_patchify_image():
 
         reconstruction = unpatchify(
             patches, latent_height, latent_width, patch_size, channels
-        )
+        ).image
+
         assert reconstruction.shape == (
             batch_size,
             channels,
@@ -60,7 +61,7 @@ def test_image_patcher():
         image = torch.rand(batch_size, channels, height, width)
 
         patcher = ImagePatcher(patch_size=patch_size, out_channels=channels)
-        patches = patcher.patchify(image)
+        patches = patcher.patchify(image).patches
         assert patches.shape == (
             batch_size,
             (height // patch_size) * (width // patch_size),
@@ -69,7 +70,7 @@ def test_image_patcher():
 
         latent_height, latent_width = height // patch_size, width // patch_size
 
-        reconstruction = patcher.unpatchify(patches, latent_height, latent_width)
+        reconstruction = patcher.unpatchify(patches, latent_height, latent_width).image
         assert reconstruction.shape == (
             batch_size,
             channels,
