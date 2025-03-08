@@ -20,7 +20,8 @@ WIP
 ## Setup
 
 ```bash
-uv sync
+uv sync --extra build
+uv sync --all-extras
 ```
 
 
