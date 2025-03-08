@@ -239,6 +239,7 @@ class CogView4ModelForInference(nn.Module):
         cfg_scale: float = 3.5,
         seed: int | None = None,
         max_token_length: int = DEFAULT_MAX_TOKEN_LENGTH,
+        execution_dtype: torch.dtype = torch.bfloat16,
         device: torch.device | str = torch.device("cuda"),
         do_offloading: bool = False,
     ) -> list[Image.Image]:
@@ -246,7 +247,6 @@ class CogView4ModelForInference(nn.Module):
         execution_device: torch.device = (
             torch.device(device) if isinstance(device, str) else device
         )
-        denoiser_dtype = next(self.denoiser.parameters()).dtype
         do_cfg = cfg_scale > 1.0
         timesteps, sigmas = self.prepare_timesteps(
             num_inference_steps, height=height, width=width, device=execution_device
@@ -282,7 +282,7 @@ class CogView4ModelForInference(nn.Module):
             batch_size,
             height,
             width,
-            denoiser_dtype,
+            execution_dtype,
             execution_device,
             seed=seed,
         )
