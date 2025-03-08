@@ -30,6 +30,7 @@ dependencies = [
     "polars>=1.23.0",
     "huggingface-hub>=0.29.1",
     "liger-kernel>=0.5.4",
+    "einops>=0.8.1",
 ]
 
 [tool.uv]
