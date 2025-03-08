@@ -83,6 +83,34 @@ def test_replace_to_quant_linear():
 
 
 @torch.no_grad()
+def test_quantize_inplace():
+    cases = [
+        # quant_type, expected class
+        ("bnb_nf4", BnbLinear4bit),
+        ("bnb_fp4", BnbLinear4bit),
+        ("bnb_int8", BnbLinear8bit),
+        ("ao_nf4", AOLinearNF4),
+        ("ao_fp8", AOLinearFP8),
+    ]
+    for quant_type, expected in cases:
+
+        class Model(nn.Module):
+            def __init__(self):
+                super(Model, self).__init__()
+                self.linear = nn.Linear(128, 256, bias=True)
+
+        model = Model()
+        quantize_inplace(
+            model,
+            quant_type=quant_type,
+            include_keys=["linear"],
+            exclude_keys=[],
+        )
+        print(model.linear)
+        assert isinstance(model.linear, expected)
+
+
+@torch.no_grad()
 def test_bnb_load_prequantized():
     class Model(nn.Module):
         def __init__(self):

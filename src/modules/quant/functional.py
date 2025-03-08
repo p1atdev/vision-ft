@@ -67,13 +67,29 @@ def _get_quant_linear(
     elif quant_type == "ao_fp8":
         return AOLinearFP8.from_float(module)
 
+    ## Optimum Quanto
+    elif quant_type == "quanto_int4":
+        print("quanto_int4")
+        return QuantoLinear.from_module(  # type: ignore
+            module,
+            weights=quanto.qint4,
+            # TODO: maybe we should quantization config from another source?
+            # we are setting activations to None for now
+            activations=None,
+        )
+
+    elif quant_type == "quanto_int8":
+        return QuantoLinear.from_module(  # type: ignore
+            module,
+            weights=quanto.qint8,
+            # TODO: maybe we should quantization config from another source?
+            # we are setting activations to None for now
+            activations=None,
+        )
+
     ## Native
     elif quant_type == "fp8_e4m3fn":
         return module.to(torch.float8_e4m3fn)  # as is
-
-    ## Optimum Quanto
-    elif quant_type == "quanto_int4" or quant_type == "quanto_int8":
-        raise NotImplementedError("QuantoLinear is not supported")
 
     raise ValueError(f"Unknown quant_type: {quant_type}")
 
@@ -166,6 +182,23 @@ def _quantize_inplace(
                 setattr(module, name, qlinear)
                 del layer
 
+            ## TorchAO
+            elif quant_type == "ao_nf4":
+                qlinear = AOLinearNF4.from_module(layer)
+                assert isinstance(qlinear, AOLinearNF4)
+                qlinear.load_state_dict(layer.state_dict(), assign=True)
+
+                setattr(module, name, qlinear)
+                del layer
+
+            elif quant_type == "ao_fp8":
+                qlinear = AOLinearFP8.from_float(layer)
+                assert isinstance(qlinear, AOLinearFP8)
+                qlinear.load_state_dict(layer.state_dict(), assign=True)
+
+                setattr(module, name, qlinear)
+                del layer
+
             ## Optimum Quanto
             elif quant_type == "quanto_int4":
                 qlinear = QuantoLinear.from_module(
@@ -222,26 +255,27 @@ def freeze_quantized_linear(model: nn.Module) -> None:
     quanto.freeze(model)
 
 
-def collect_children_keys(
+def collect_children_dict(
     prefix: str,
-    state_dict_keys: Iterable[str],
+    state_dict: dict[str, torch.Tensor],
     remove_prefix: bool = True,
-) -> list[str]:
+) -> dict[str, torch.Tensor]:
     """
     Collect keys that start with prefix
     """
-    keys = []
-    for key in state_dict_keys:
+    keys = {}
+    for key, value in state_dict.items():
         if key.startswith(prefix):
-            keys.append(key[len(prefix) :] if remove_prefix else key)
+            keys[key[len(prefix) :] if remove_prefix else key] = value
 
     return keys
 
 
-def get_quant_type_from_children_keys(
-    children_keys: Iterable[str],
+def get_quant_type_from_children_dict(
+    children_dict: dict[str, torch.Tensor],
 ) -> QUANT_TYPE:
-    for key in children_keys:
+    for key, tensor in children_dict.items():
+        ## Bitsandbytes
         if "quant_state" in key:
             quant_type = key[len("quant_state.bitsandbytes__") :]
             if quant_type in "nf4":
@@ -250,6 +284,15 @@ def get_quant_type_from_children_keys(
                 return "bnb_fp4"
         elif "weight_format" in key:
             return "bnb_int8"
+
+        ## Quanto
+        elif "_data" in key:
+            # qint8 -> torch.int8
+            # qint4 -> torch.uint8
+            if tensor.dtype == torch.int8:
+                return "quanto_int8"
+            elif tensor.dtype == torch.uint8:
+                return "quanto_int4"
 
     raise ValueError("quant_type not found")
 
@@ -262,14 +305,14 @@ def _replace_by_prequantized_weights(
     for name, layer in model.named_children():
         full_name = f"{prefix}{name}"
         if isinstance(layer, nn.Linear):
-            children_keys = collect_children_keys(
+            children_dict = collect_children_dict(
                 f"{full_name}.weight.",
-                state_dict.keys(),
+                state_dict,
             )
-            if len(children_keys) == 0:
+            if len(children_dict) == 0:
                 continue
 
-            quant_type = get_quant_type_from_children_keys(children_keys)
+            quant_type = get_quant_type_from_children_dict(children_dict)
             quantized_module = _get_quant_linear(layer, quant_type)
 
             quantized_module.requires_grad_(False)
