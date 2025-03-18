@@ -69,7 +69,6 @@ def _get_quant_linear(
 
     ## Optimum Quanto
     elif quant_type == "quanto_int4":
-        print("quanto_int4")
         return QuantoLinear.from_module(  # type: ignore
             module,
             weights=quanto.qint4,

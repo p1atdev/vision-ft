@@ -23,6 +23,17 @@ from .config import DenoiserConfig
 # mostly from https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_cogview4.py
 
 
+class FP32LayerNorm(nn.LayerNorm):
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return F.layer_norm(
+            hidden_states.to(torch.float32),
+            self.normalized_shape,
+            self.weight.to(torch.float32) if self.weight is not None else None,
+            self.bias.to(torch.float32) if self.bias is not None else None,
+            self.eps,
+        ).to(hidden_states.dtype)
+
+
 class GlobalConditionEmbedding(nn.Module):
     # process timestep and conditions like SDXL
 
@@ -148,8 +159,8 @@ class AdaLayerNormZero(nn.Module):
     def __init__(self, embedding_dim: int, dim: int) -> None:
         super().__init__()
 
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-5)
-        self.norm_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-5)
+        self.norm = FP32LayerNorm(dim, elementwise_affine=False, eps=1e-5)
+        self.norm_context = FP32LayerNorm(dim, elementwise_affine=False, eps=1e-5)
         self.linear = nn.Linear(embedding_dim, 12 * dim, bias=True)
 
     def forward(
@@ -234,8 +245,8 @@ class SelfAttention(nn.Module):
         self.to_k = nn.Linear(hidden_dim, hidden_dim, bias=bias)
         self.to_v = nn.Linear(hidden_dim, hidden_dim, bias=bias)
 
-        self.norm_q = nn.LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
-        self.norm_k = nn.LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
+        self.norm_q = FP32LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
+        self.norm_k = FP32LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
 
         self.to_out = nn.ModuleList(
             [
@@ -362,8 +373,8 @@ class TransformerBlock(nn.Module):
         )
 
         # 2. Feedforward
-        self.norm2 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-5)
-        self.norm2_context = nn.LayerNorm(
+        self.norm2 = FP32LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-5)
+        self.norm2_context = FP32LayerNorm(
             hidden_dim, elementwise_affine=False, eps=1e-5
         )
         self.ff = FeedForward(hidden_dim=hidden_dim)
@@ -402,25 +413,9 @@ class TransformerBlock(nn.Module):
 
         # 3. Feedforward
         norm_hidden_states = (
-            # liger_layer_norm(  # type: ignore
-            #     hidden_states,
-            #     W=torch.ones(
-            #         self.hidden_dim, device=hidden_states.device
-            #     ),  # elementwise_affine=False
-            #     B=torch.zeros(self.hidden_dim, device=hidden_states.device),
-            #     eps=self.norm2.eps,
-            # )
             self.norm2(hidden_states) * (1 + scale_mlp.unsqueeze(1))
         ) + shift_mlp.unsqueeze(1)
         norm_encoder_hidden_states = (
-            # liger_layer_norm(  # type: ignore
-            #     encoder_hidden_states,
-            #     W=torch.ones(
-            #         self.hidden_dim, device=encoder_hidden_states.device
-            #     ),  # elementwise_affine=False
-            #     B=torch.zeros(self.hidden_dim, device=encoder_hidden_states.device),
-            #     eps=self.norm2_context.eps,
-            # )
             self.norm2_context(encoder_hidden_states) * (1 + c_scale_mlp.unsqueeze(1))
         ) + c_shift_mlp.unsqueeze(1)
 
@@ -510,10 +505,13 @@ class FinalAdaLayerNorm(nn.Module):
     ) -> None:
         super().__init__()
 
-        # 2 stands for shift and scale
-        self.linear = nn.Linear(condition_dim, 2 * hidden_dim, bias=bias)
+        self.linear = nn.Linear(
+            condition_dim,
+            2 * hidden_dim,  # 2 stands for scale and shift
+            bias=bias,
+        )
 
-        self.norm = nn.LayerNorm(
+        self.norm = FP32LayerNorm(
             hidden_dim, elementwise_affine=elementwise_affine, eps=eps
         )
         self.act = get_activation(hidden_act)
@@ -628,55 +626,50 @@ class CogView4DiT(nn.Module, OffloadableModuleMixin):
 
         # 1. patchify and project
         patches = self.patchify(latent).patches
-        with self.maybe_on_execution_device(self.patch_embed):
-            hidden_states, encoder_hidden_states = self.patch_embed(
-                patches, encoder_hidden_states
-            )
+        hidden_states, encoder_hidden_states = self.patch_embed(
+            patches, encoder_hidden_states
+        )
 
         # 2. prepare RoPE
         rope_freqs = self.rope(latent)
 
         # 3. global condition embedding
         # global condition embedding, including timestep and image sizes
-        with self.maybe_on_execution_device(self.time_condition_embed):
-            global_cond = self.time_condition_embed(
-                timestep,
-                original_size,
-                target_size,
-                crop_coords,
-                hidden_states.dtype,
-            )
+        global_cond = self.time_condition_embed(
+            timestep,
+            original_size,
+            target_size,
+            crop_coords,
+            hidden_states.dtype,
+        )
 
         # 4. transformer blocks!
-        with self.on_temporarily_another_device(modules=list(self.transformer_blocks)):
-            for i, block in enumerate(self.transformer_blocks):
-                if self.offload_strategy is not None:
-                    self.maybe_offload_by_group(
-                        list(self.transformer_blocks),
-                        current_index=i,
-                    )
+        for i, block in enumerate(self.transformer_blocks):
+            if self.offload_strategy is not None:
+                self.maybe_offload_by_group(
+                    list(self.transformer_blocks),
+                    current_index=i,
+                )
 
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
-                    hidden_states, encoder_hidden_states = checkpoint.checkpoint(  # type: ignore
-                        block,
-                        hidden_states,
-                        encoder_hidden_states,
-                        global_cond,
-                        rope_freqs,
-                    )
-                else:
-                    hidden_states, encoder_hidden_states = block(
-                        hidden_states,
-                        encoder_hidden_states,
-                        global_cond,
-                        rope_freqs,
-                    )
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                hidden_states, encoder_hidden_states = checkpoint.checkpoint(  # type: ignore
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    global_cond,
+                    rope_freqs,
+                )
+            else:
+                hidden_states, encoder_hidden_states = block(
+                    hidden_states,
+                    encoder_hidden_states,
+                    global_cond,
+                    rope_freqs,
+                )
 
         # 5. final layer
-        with self.maybe_on_execution_device(self.norm_out):
-            hidden_states = self.norm_out(hidden_states, global_cond)
-        with self.maybe_on_execution_device(self.proj_out):
-            hidden_states = self.proj_out(hidden_states)
+        hidden_states = self.norm_out(hidden_states, global_cond)
+        hidden_states = self.proj_out(hidden_states)
 
         # 6. unpatchfy
         latent = self.unpatchify(hidden_states, height, width).image
