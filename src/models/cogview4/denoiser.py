@@ -505,8 +505,11 @@ class FinalAdaLayerNorm(nn.Module):
     ) -> None:
         super().__init__()
 
-        # 2 stands for shift and scale
-        self.linear = nn.Linear(condition_dim, 2 * hidden_dim, bias=bias)
+        self.linear = nn.Linear(
+            condition_dim,
+            2 * hidden_dim,  # 2 stands for scale and shift
+            bias=bias,
+        )
 
         self.norm = FP32LayerNorm(
             hidden_dim, elementwise_affine=elementwise_affine, eps=eps
@@ -623,55 +626,50 @@ class CogView4DiT(nn.Module, OffloadableModuleMixin):
 
         # 1. patchify and project
         patches = self.patchify(latent).patches
-        with self.maybe_on_execution_device(self.patch_embed):
-            hidden_states, encoder_hidden_states = self.patch_embed(
-                patches, encoder_hidden_states
-            )
+        hidden_states, encoder_hidden_states = self.patch_embed(
+            patches, encoder_hidden_states
+        )
 
         # 2. prepare RoPE
         rope_freqs = self.rope(latent)
 
         # 3. global condition embedding
         # global condition embedding, including timestep and image sizes
-        with self.maybe_on_execution_device(self.time_condition_embed):
-            global_cond = self.time_condition_embed(
-                timestep,
-                original_size,
-                target_size,
-                crop_coords,
-                hidden_states.dtype,
-            )
+        global_cond = self.time_condition_embed(
+            timestep,
+            original_size,
+            target_size,
+            crop_coords,
+            hidden_states.dtype,
+        )
 
         # 4. transformer blocks!
-        with self.on_temporarily_another_device(modules=list(self.transformer_blocks)):
-            for i, block in enumerate(self.transformer_blocks):
-                if self.offload_strategy is not None:
-                    self.maybe_offload_by_group(
-                        list(self.transformer_blocks),
-                        current_index=i,
-                    )
+        for i, block in enumerate(self.transformer_blocks):
+            if self.offload_strategy is not None:
+                self.maybe_offload_by_group(
+                    list(self.transformer_blocks),
+                    current_index=i,
+                )
 
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
-                    hidden_states, encoder_hidden_states = checkpoint.checkpoint(  # type: ignore
-                        block,
-                        hidden_states,
-                        encoder_hidden_states,
-                        global_cond,
-                        rope_freqs,
-                    )
-                else:
-                    hidden_states, encoder_hidden_states = block(
-                        hidden_states,
-                        encoder_hidden_states,
-                        global_cond,
-                        rope_freqs,
-                    )
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                hidden_states, encoder_hidden_states = checkpoint.checkpoint(  # type: ignore
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    global_cond,
+                    rope_freqs,
+                )
+            else:
+                hidden_states, encoder_hidden_states = block(
+                    hidden_states,
+                    encoder_hidden_states,
+                    global_cond,
+                    rope_freqs,
+                )
 
         # 5. final layer
-        with self.maybe_on_execution_device(self.norm_out):
-            hidden_states = self.norm_out(hidden_states, global_cond)
-        with self.maybe_on_execution_device(self.proj_out):
-            hidden_states = self.proj_out(hidden_states)
+        hidden_states = self.norm_out(hidden_states, global_cond)
+        hidden_states = self.proj_out(hidden_states)
 
         # 6. unpatchfy
         latent = self.unpatchify(hidden_states, height, width).image

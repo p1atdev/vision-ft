@@ -33,7 +33,7 @@ def convert_to_original_key(key: str) -> str:
     return key
 
 
-class CogView4ModelForInference(nn.Module):
+class CogView4Model(nn.Module):
     denoiser: Denoiser
     denoiser_class: type[Denoiser] = Denoiser
 
@@ -54,7 +54,7 @@ class CogView4ModelForInference(nn.Module):
         self.progress_bar = tqdm
 
     @classmethod
-    def from_config(cls, config: CogView4Config) -> "CogView4ModelForInference":
+    def from_config(cls, config: CogView4Config) -> "CogView4Model":
         return cls(config)
 
     def _from_checkpoint(
@@ -103,7 +103,7 @@ class CogView4ModelForInference(nn.Module):
     def from_checkpoint(
         cls,
         config: CogView4Config,
-    ) -> "CogView4ModelForInference":
+    ) -> "CogView4Model":
         with init_empty_weights():
             model = cls.from_config(config)
 
