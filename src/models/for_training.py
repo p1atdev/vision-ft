@@ -1,15 +1,13 @@
 from abc import ABC, abstractmethod
+from typing import Any
 from pydantic import BaseModel
 from PIL import Image
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
 
 from accelerate import Accelerator
 
-from ..optimizer import get_optimizer
-from ..scheduler import get_scheduler, NothingScheduler
 from ..config import TrainConfig
 
 
@@ -20,8 +18,6 @@ class ModelForTraining(ABC, nn.Module):
     model_config_class: type[BaseModel]
 
     model: nn.Module
-    optimizer: optim.Optimizer
-    scheduler: optim.lr_scheduler._LRScheduler
 
     _current_step: int = 0
     _logs_at_step: dict = {}
@@ -71,26 +67,6 @@ class ModelForTraining(ABC, nn.Module):
     def sanity_check(self):
         pass
 
-    def setup_optimizer(self):
-        optimizer = get_optimizer(
-            self.config.optimizer.name,
-            self.model.parameters(),
-            **self.config.optimizer.args,
-        )
-        if (scheduler_config := self.config.scheduler) is not None:
-            scheduler = get_scheduler(
-                optimizer,
-                scheduler_config.name,
-                **scheduler_config.args,
-            )
-        else:
-            scheduler = NothingScheduler(optimizer)
-
-        self.optimizer = self.accelerator.prepare_optimizer(
-            optimizer,
-        )  # type: ignore  # Accelerator's prepare_optimizer method may not be recognized by type checkers
-        self.scheduler = scheduler
-
     @abstractmethod
     def train_step(self, batch) -> torch.Tensor:
         pass
@@ -99,19 +75,10 @@ class ModelForTraining(ABC, nn.Module):
     def eval_step(self, batch) -> torch.Tensor:
         pass
 
-    def backward(self, loss: torch.Tensor):
-        self.before_backward()
-
-        self.accelerator.backward(loss)
-
-        self.after_backward()
-
     def before_train_step(self):
-        self.optimizer.zero_grad()
         self.increment_step()
 
     def after_train_step(self):
-        self._log_metadata()
         self._send_logs_at_step()
 
     @abstractmethod
@@ -138,25 +105,15 @@ class ModelForTraining(ABC, nn.Module):
                     self.config.trainer.clip_grad_value,
                 )
 
-        self.optimizer.step()
-        self.scheduler.step()
-
     def before_train_epoch(self):
         self.model.train()
-        # if the optimizer has train(), call it
-        if hasattr(self.optimizer, "train"):
-            self.optimizer.train()  # type: ignore  # Some optimizers might not have a train method
 
     def after_train_epoch(self):
         self._send_logs_at_epoch()
         self.model.eval()
-        if hasattr(self.optimizer, "eval"):
-            self.optimizer.eval()  # type: ignore  # Some optimizers might not have an eval method
 
     def before_eval_epoch(self):
         self.model.eval()
-        if hasattr(self.optimizer, "eval"):
-            self.optimizer.eval()  # type: ignore
 
     def after_eval_epoch(self):
         self._send_logs_at_epoch()
@@ -185,7 +142,7 @@ class ModelForTraining(ABC, nn.Module):
         self,
         batch,
         preview_index: int,
-    ) -> list[Image.Image]:
+    ) -> Any:
         """
         e.g.) generate sample images for checking the training progress
         """
@@ -243,10 +200,8 @@ class ModelForTraining(ABC, nn.Module):
                     )
         self._logs_at_epoch = {}
 
-    def _log_metadata(self):
-        # learning rate
-        for i, param_group in enumerate(self.optimizer.param_groups):
-            self.log(f"lr/group_{i}", param_group["lr"], on_step=True, on_epoch=False)
-
     def increment_step(self):
         self._current_step += 1
+
+    def forward(self, *args, **kwargs):
+        return self.train_step(*args, **kwargs)

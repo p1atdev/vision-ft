@@ -28,15 +28,14 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
     model_config_class = AuraFlowConig
 
     def setup_model(self):
-        if self.accelerator.is_main_process:
-            with init_empty_weights():
-                self.model = AuraFlowModel(self.model_config)
+        with init_empty_weights():
+            self.model = AuraFlowModel(self.model_config)
 
-                # freeze other modules
-                self.model.text_encoder.eval()
-                self.model.vae.eval()  # type: ignore
+            # freeze other modules
+            self.model.text_encoder.eval()
+            self.model.vae.eval()  # type: ignore
 
-            self.model._load_original_weights()
+        self.model._load_original_weights()
 
     def sanity_check(self):
         latent = self.model.prepare_latents(
@@ -138,9 +137,8 @@ class AuraFlowForTextToImageTraining(ModelForTraining, nn.Module):
         return [image]
 
     def after_setup_model(self):
-        if self.accelerator.is_main_process:
-            if self.config.trainer.gradient_checkpointing:
-                self.model.denoiser._set_gradient_checkpointing(True)
+        if self.config.trainer.gradient_checkpointing:
+            self.model.denoiser._set_gradient_checkpointing(True)
 
         super().after_setup_model()
 

@@ -8,10 +8,12 @@ import torch.utils.checkpoint as checkpoint
 
 
 from flash_attn import flash_attn_func
+import xformers.ops as X
 
 AttentionImplementation = Literal[
     "eager",
     "flash_attention_2",
+    "xformers",
 ]
 
 
@@ -83,7 +85,9 @@ def scaled_dot_product_attention(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
+    mask: torch.Tensor | None = None,
     scale: float | None = None,
+    dropout: float = 0.0,
     backend: AttentionImplementation = "eager",
     attention_dtype: torch.dtype = torch.bfloat16,  # float16 or bfloat16
     is_causal: bool = False,
@@ -104,22 +108,35 @@ def scaled_dot_product_attention(
             q,
             k,
             v,
-            dropout_p=0.0,
+            attn_mask=mask,
+            dropout_p=dropout,
             is_causal=is_causal,
             scale=scale,
         )
 
     if backend == "flash_attention_2":
+        if mask is not None:
+            raise ValueError("Flash Attention does not support attention masks")
+
         output = flash_attn_func(
             q.permute(0, 2, 1, 3),
             k.permute(0, 2, 1, 3),
             v.permute(0, 2, 1, 3),
-            dropout_p=0.0,
+            dropout_p=dropout,
             causal=is_causal,
             softmax_scale=scale,
         )
         assert isinstance(output, torch.Tensor)
         return output.permute(0, 2, 1, 3)
+
+    if backend == "xformers":
+        return X.memory_efficient_attention(
+            q.permute(0, 2, 1, 3),
+            k.permute(0, 2, 1, 3),
+            v.permute(0, 2, 1, 3),
+            p=dropout,  # dropout
+            attn_bias=mask,
+        ).permute(0, 2, 1, 3)
 
     raise ValueError(f"Unknown backend: {backend}")
 

@@ -21,7 +21,6 @@ class DenoiserConfig(BaseModel):
     attention_backend: AttentionImplementation = "eager"
     vae_compression_ratio: float = 8.0
 
-    # Shortcut
     use_shortcut: bool = False
     use_guidance: bool = False
 

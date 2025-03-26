@@ -3,18 +3,22 @@ import warnings
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torch.utils.data as data
 
 from accelerate import Accelerator
+from accelerate.utils import broadcast_object_list
 from transformers import set_seed
 
 from ..config import TrainConfig, DEBUG_MODE_TYPE
 from ..saving import ModelSavingStrategy, get_saving_callback
 from ..preview import PreviewStrategy, get_preview_callback
 from ..dataset.util import DatasetConfig
-from ..dataloader import get_dataloader_for_bucketing, get_dataloader_for_preview
+from ..dataloader import get_dataloader, get_dataloader_for_preview, list_collate_fn
 from ..utils.logging import get_trackers
 from ..utils.safetensors import load_file_with_rename_key_map
+from ..optimizer import get_optimizer
+from ..scheduler import get_scheduler, NothingScheduler
 from ..models.for_training import ModelForTraining
 from ..modules.peft import (
     PeftTargetConfig,
@@ -26,6 +30,9 @@ from ..modules.peft import (
 
 class Trainer:
     model: ModelForTraining
+
+    optimizer: optim.Optimizer
+    scheduler: optim.lr_scheduler._LRScheduler
 
     peft_config: PeftTargetConfig | list[PeftTargetConfig] | None
 
@@ -53,7 +60,11 @@ class Trainer:
             log_with=get_trackers(config),
             gradient_accumulation_steps=config.trainer.gradient_accumulation_steps,
         )
-        if self.debug_mode is False and (tracker := config.tracker) is not None:
+        if (
+            (self.debug_mode is False)
+            and ((tracker := config.tracker) is not None)
+            and self.accelerator.is_main_process
+        ):
             self.accelerator.init_trackers(
                 project_name=tracker.project_name,
                 config=config.model_dump(),
@@ -76,6 +87,10 @@ class Trainer:
                 self.config.preview.data
             )
 
+    @property
+    def raw_model(self) -> ModelForTraining:
+        return self.accelerator.unwrap_model(self.model)
+
     def get_saving_callbacks(self):
         if (saving := self.config.saving) is not None:
             if len(saving.callbacks) == 0:
@@ -97,10 +112,12 @@ class Trainer:
     def prepare_dataloaders(self):
         train_ds = self.dataset_config.get_dataset()
 
-        train_dataloader = get_dataloader_for_bucketing(
+        train_dataloader = get_dataloader(
             train_ds,
+            batch_size=self.dataset_config.batch_size,
             shuffle=self.dataset_config.shuffle,
             num_workers=self.dataset_config.num_workers,
+            collate_fn=list_collate_fn,
         )
         self.train_dataloader = self.accelerator.prepare_data_loader(train_dataloader)
         # TODO: eval
@@ -179,13 +196,34 @@ class Trainer:
             self.model._set_is_peft(False)
 
     def prepare_model(self):
-        if self.accelerator.is_main_process:
-            self.model.before_setup_model()
-            self.model.setup_model()
-            self.setup_peft_if_needed()
-            self.model.after_setup_model()
+        self.model.before_setup_model()
+        self.model.setup_model()
+        self.setup_peft_if_needed()
+        self.model.after_setup_model()
 
         self.model = self.accelerator.prepare(self.model)
+
+    def prepare_optimizer(self):
+        optimizer = get_optimizer(
+            self.config.optimizer.name,
+            self.model.parameters(),
+            **self.config.optimizer.args,
+        )
+        if (scheduler_config := self.config.scheduler) is not None:
+            scheduler = get_scheduler(
+                optimizer,
+                scheduler_config.name,
+                **scheduler_config.args,
+            )
+        else:
+            scheduler = NothingScheduler(optimizer)
+
+        self.optimizer = self.accelerator.prepare_optimizer(
+            optimizer,
+        )  # type: ignore  # Accelerator's prepare_optimizer method may not be recognized by type checkers
+        self.scheduler = self.accelerator.prepare_scheduler(
+            scheduler,
+        )
 
     def before_train(self):
         self.torch_configuration()
@@ -214,11 +252,44 @@ class Trainer:
         self.print("Setting up model")
         self.prepare_model()
         self.print("Setting up optimizer")
-        self.model.setup_optimizer()
+        self.prepare_optimizer()
 
     def after_train(self):
         self.print("after_train()")
         pass
+
+    def before_train_epoch(self):
+        self.raw_model.before_train_epoch()
+        # if the optimizer has train(), call it
+        if hasattr(self.optimizer, "train"):
+            self.optimizer.train()  # type: ignore  # Some optimizers might not have a train method
+
+    def after_train_epoch(self):
+        self.raw_model.after_train_epoch()
+        if hasattr(self.optimizer, "eval"):
+            self.optimizer.eval()  # type: ignore  # Some optimizers might not have an eval method
+
+    def before_train_step(self):
+        self.optimizer.zero_grad()
+        self.raw_model.before_train_step()
+
+    def after_train_step(self):
+        self._log_metadata()
+        self.raw_model.after_train_step()
+
+    def before_eval_epoch(self):
+        self.raw_model.before_eval_epoch()
+        if hasattr(self.optimizer, "eval"):
+            self.optimizer.eval()  # type: ignore
+
+    def after_eval_epoch(self):
+        self.raw_model.after_eval_epoch()
+
+    def before_eval_step(self):
+        self.raw_model.before_eval_step()
+
+    def after_eval_step(self):
+        self.raw_model.after_eval_step()
 
     def training_loop(self):
         self.print("training_loop()")
@@ -227,7 +298,7 @@ class Trainer:
         total_epochs = self.config.num_train_epochs
 
         for epoch in range(1, total_epochs + 1):  # shift to 1-indexed
-            self.model.before_train_epoch()
+            self.before_train_epoch()
 
             with tqdm(
                 total=len(self.train_dataloader), desc=f"Train Epoch {epoch}"
@@ -235,11 +306,11 @@ class Trainer:
                 for _steps, batch in enumerate(self.train_dataloader):
                     with self.accelerator.accumulate(self.model):
                         current_step += 1
-                        self.model.before_train_step()
+                        self.before_train_step()
 
                         with self.accelerator.autocast():
-                            loss = self.model.train_step(batch)
-                        self.model.backward(loss)
+                            loss = self.model(batch)
+                        self.backward(loss)
                         pbar.set_postfix({"loss": loss.item()})
 
                         pbar.update(1)
@@ -247,64 +318,73 @@ class Trainer:
                         self.call_saving_callbacks(epoch, current_step)
                         self.call_preview_callbacks(epoch, current_step)
 
-                        self.model.after_train_step()
+                        self.after_train_step()
 
                         if self.debug_mode == "1step":
                             break
 
-            self.model.after_train_epoch()
-            self.model.log("epoch", epoch)
+            self.after_train_epoch()
+            self.raw_model.log("epoch", epoch)
 
             if self.eval_dataloader is not None:
-                self.model.before_eval_epoch()
+                self.before_eval_epoch()
 
                 with tqdm(
                     total=len(self.eval_dataloader), desc=f"Eval Epoch {epoch}"
                 ) as pbar:
                     for _steps, batch in enumerate(self.eval_dataloader):
-                        self.model.before_eval_step()
+                        self.before_eval_step()
 
                         with self.accelerator.autocast():
-                            loss = self.model.eval_step(batch)
+                            loss = self.raw_model.eval_step(batch)
                         pbar.set_postfix({"loss": loss.item()})
 
                         pbar.update(1)
 
-                        self.model.after_eval_step()
+                        self.after_eval_step()
 
                         if self.debug_mode == "1step":
                             break
 
-                self.model.after_eval_epoch()
+                self.after_eval_epoch()
 
             if self.debug_mode == "1step":
                 break
 
+    def backward(self, loss: torch.Tensor):
+        self.raw_model.before_backward()
+        self.accelerator.backward(loss)
+        self.optimizer.step()
+        self.scheduler.step()
+        self.raw_model.after_backward()
+
     def call_saving_callbacks(self, epoch: int, steps: int):
         if self.saving_strategy.should_save(epoch, steps):
-            self.model.before_save_model()
+            self.accelerator.wait_for_everyone()
+            self.raw_model.before_save_model()
 
-            if len(self.saving_callbacks) > 0:
-                if self.accelerator.is_main_process:
-                    unwrapped_model: ModelForTraining = self.accelerator.unwrap_model(
-                        self.model
-                    )
-                    state_dict = unwrapped_model.get_state_dict_to_save()
-                    self.print("Saving model...")
+            if len(self.saving_callbacks) > 0 and self.accelerator.is_main_process:
+                unwrapped_model: ModelForTraining = self.accelerator.unwrap_model(
+                    self.raw_model
+                )
+                state_dict = unwrapped_model.get_state_dict_to_save()
+                self.print("Saving model...")
 
-                    for callback in self.saving_callbacks:
-                        callback.save_state_dict(state_dict, epoch, steps)
+                for callback in self.saving_callbacks:
+                    callback.save_state_dict(state_dict, epoch, steps)
 
-                    self.print("Model saved.")
+                self.print("Model saved.")
 
             self.accelerator.wait_for_everyone()
-            self.model.after_save_model()
+            self.raw_model.after_save_model()
 
     def call_preview_callbacks(self, epoch: int, steps: int):
         if self.preview_strategy.should_preview(epoch, steps):
-            self.model.before_preview()
+            self.accelerator.wait_for_everyone()
 
-            if len(self.preview_callbacks) > 0:
+            self.raw_model.before_preview()
+
+            if len(self.preview_callbacks) > 0 and self.accelerator.is_main_process:
                 assert self.preview_dataloader is not None
                 self.print("Generating preview images...")
                 for i, batch in tqdm(
@@ -312,16 +392,16 @@ class Trainer:
                     total=len(self.preview_dataloader),
                     desc="Preview",
                 ):
-                    self.model.before_preview_step()
-                    preview = self.model.preview_step(batch, preview_index=i)
+                    self.raw_model.before_preview_step()
+                    preview = self.raw_model.preview_step(batch, preview_index=i)
                     for callback in self.preview_callbacks:
                         callback.preview_image(preview, epoch, steps, i, metadata=batch)
-                    self.model.after_preview_step()
+                    self.raw_model.after_preview_step()
 
                 self.print("Preview done.")
 
             self.accelerator.wait_for_everyone()
-            self.model.after_preview()
+            self.raw_model.after_preview()
 
     def debug_dataset(self):
         if self.train_dataloader is None:
@@ -351,7 +431,7 @@ class Trainer:
         if self.debug_mode == "dataset":
             return
 
-        self.model.sanity_check()
+        self.raw_model.sanity_check()
         if self.debug_mode == "sanity_check":
             self.print("Sanity check done. Exiting...")
             return
@@ -368,3 +448,10 @@ class Trainer:
             return
 
         self.accelerator.log(*args, **kwargs)
+
+    def _log_metadata(self):
+        # learning rate
+        for i, param_group in enumerate(self.optimizer.param_groups):
+            self.raw_model.log(
+                f"lr/group_{i}", param_group["lr"], on_step=True, on_epoch=False
+            )

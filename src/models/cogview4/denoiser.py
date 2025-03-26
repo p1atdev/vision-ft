@@ -23,6 +23,17 @@ from .config import DenoiserConfig
 # mostly from https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_cogview4.py
 
 
+class FP32LayerNorm(nn.LayerNorm):
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return F.layer_norm(
+            hidden_states.to(torch.float32),
+            self.normalized_shape,
+            self.weight.to(torch.float32) if self.weight is not None else None,
+            self.bias.to(torch.float32) if self.bias is not None else None,
+            self.eps,
+        ).to(hidden_states.dtype)
+
+
 class GlobalConditionEmbedding(nn.Module):
     # process timestep and conditions like SDXL
 
@@ -148,8 +159,8 @@ class AdaLayerNormZero(nn.Module):
     def __init__(self, embedding_dim: int, dim: int) -> None:
         super().__init__()
 
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-5)
-        self.norm_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-5)
+        self.norm = FP32LayerNorm(dim, elementwise_affine=False, eps=1e-5)
+        self.norm_context = FP32LayerNorm(dim, elementwise_affine=False, eps=1e-5)
         self.linear = nn.Linear(embedding_dim, 12 * dim, bias=True)
 
     def forward(
@@ -200,17 +211,19 @@ class AdaLayerNormZero(nn.Module):
 
 
 def apply_rotary_emb(
-    x: torch.Tensor,
-    freqs_cis: torch.Tensor,
+    inputs: torch.Tensor,
+    freqs_cis: tuple[torch.Tensor, torch.Tensor],
 ) -> torch.Tensor:
     cos, sin = freqs_cis  # [S, D]
     cos = cos[None, None]
     sin = sin[None, None]
-    cos, sin = cos.to(x.device), sin.to(x.device)
+    cos, sin = cos.to(inputs.device), sin.to(inputs.device)
 
-    x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)  # [B, S, H, D//2]
-    x_rotated = torch.cat([-x_imag, x_real], dim=-1)
-    out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+    inputs_real, inputs_imag = inputs.reshape(*inputs.shape[:-1], 2, -1).unbind(
+        -2
+    )  # [B, S, H, D//2]
+    x_rotated = torch.cat([-inputs_imag, inputs_real], dim=-1)
+    out = (inputs.float() * cos + x_rotated.float() * sin).to(inputs.dtype)
 
     return out
 
@@ -234,8 +247,8 @@ class SelfAttention(nn.Module):
         self.to_k = nn.Linear(hidden_dim, hidden_dim, bias=bias)
         self.to_v = nn.Linear(hidden_dim, hidden_dim, bias=bias)
 
-        self.norm_q = nn.LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
-        self.norm_k = nn.LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
+        self.norm_q = FP32LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
+        self.norm_k = FP32LayerNorm(self.head_dim, elementwise_affine=False, eps=1e-5)
 
         self.to_out = nn.ModuleList(
             [
@@ -362,8 +375,8 @@ class TransformerBlock(nn.Module):
         )
 
         # 2. Feedforward
-        self.norm2 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-5)
-        self.norm2_context = nn.LayerNorm(
+        self.norm2 = FP32LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-5)
+        self.norm2_context = FP32LayerNorm(
             hidden_dim, elementwise_affine=False, eps=1e-5
         )
         self.ff = FeedForward(hidden_dim=hidden_dim)
@@ -402,25 +415,9 @@ class TransformerBlock(nn.Module):
 
         # 3. Feedforward
         norm_hidden_states = (
-            # liger_layer_norm(  # type: ignore
-            #     hidden_states,
-            #     W=torch.ones(
-            #         self.hidden_dim, device=hidden_states.device
-            #     ),  # elementwise_affine=False
-            #     B=torch.zeros(self.hidden_dim, device=hidden_states.device),
-            #     eps=self.norm2.eps,
-            # )
             self.norm2(hidden_states) * (1 + scale_mlp.unsqueeze(1))
         ) + shift_mlp.unsqueeze(1)
         norm_encoder_hidden_states = (
-            # liger_layer_norm(  # type: ignore
-            #     encoder_hidden_states,
-            #     W=torch.ones(
-            #         self.hidden_dim, device=encoder_hidden_states.device
-            #     ),  # elementwise_affine=False
-            #     B=torch.zeros(self.hidden_dim, device=encoder_hidden_states.device),
-            #     eps=self.norm2_context.eps,
-            # )
             self.norm2_context(encoder_hidden_states) * (1 + c_scale_mlp.unsqueeze(1))
         ) + c_shift_mlp.unsqueeze(1)
 
@@ -466,8 +463,8 @@ class RoPE(nn.Module):
         )
         h_seq = torch.arange(self.rope_axes_dim[0])
         w_seq = torch.arange(self.rope_axes_dim[1])
-        self.freqs_h = torch.outer(h_seq, h_inv_freq)
-        self.freqs_w = torch.outer(w_seq, w_inv_freq)
+        self.freqs_h = torch.outer(h_seq, h_inv_freq).to(torch.float32)
+        self.freqs_w = torch.outer(w_seq, w_inv_freq).to(torch.float32)
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size, num_channels, height, width = hidden_states.shape
@@ -478,8 +475,6 @@ class RoPE(nn.Module):
         inner_h_idx = h_idx * self.rope_axes_dim[0] // height
         inner_w_idx = w_idx * self.rope_axes_dim[1] // width
 
-        self.freqs_h = self.freqs_h.to(hidden_states.device)
-        self.freqs_w = self.freqs_w.to(hidden_states.device)
         freqs_h = self.freqs_h[inner_h_idx]
         freqs_w = self.freqs_w[inner_w_idx]
 
@@ -513,7 +508,7 @@ class FinalAdaLayerNorm(nn.Module):
         # 2 stands for shift and scale
         self.linear = nn.Linear(condition_dim, 2 * hidden_dim, bias=bias)
 
-        self.norm = nn.LayerNorm(
+        self.norm = FP32LayerNorm(
             hidden_dim, elementwise_affine=elementwise_affine, eps=eps
         )
         self.act = get_activation(hidden_act)
