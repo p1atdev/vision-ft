@@ -31,6 +31,7 @@ dependencies = [
     "huggingface-hub>=0.29.1",
     "liger-kernel>=0.5.4",
     "einops>=0.8.1",
+    "xformers>=0.0.29.post1",
 ]
 
 [tool.uv]
