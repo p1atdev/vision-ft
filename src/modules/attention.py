@@ -82,7 +82,7 @@ def scaled_qkv_attention(
 
 
 def scaled_dot_product_attention(
-    q: torch.Tensor,
+    q: torch.Tensor,  # (batch_size, num_heads, seq_len, head_dim)
     k: torch.Tensor,
     v: torch.Tensor,
     mask: torch.Tensor | None = None,
