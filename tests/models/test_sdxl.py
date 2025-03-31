@@ -71,6 +71,18 @@ def test_convert_key():
             "model.diffusion_model.middle_block.1.transformer_blocks.0.attn1.to_k.weight",
             "denoiser.middle_block.blocks.1.transformer_blocks.0.attn1.to_k.weight",
         ),
+        (
+            "conditioner.embedders.0.transformer.text_model.embeddings.position_embedding.weight",
+            "text_encoder.text_encoder_1.text_model.embeddings.position_embedding.weight",
+        ),
+        (  # this is not perfect transformation at this time, and will be renamed at convert_open_clip_to_transformers
+            "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_bias",
+            "text_encoder.text_encoder_2.text_model.transformer.resblocks.0.attn.in_proj_bias",
+        ),
+        (
+            "conditioner.embedders.1.model.text_projection",
+            "text_encoder.text_encoder_2.text_projection.weight",
+        ),
     ]
 
     for input, expected in test_cases:

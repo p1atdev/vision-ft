@@ -1,4 +1,12 @@
-from src.utils.state_dict import get_target_keys, RegexMatch
+import torch
+import torch.nn.functional as F
+
+from src.utils.state_dict import (
+    get_target_keys,
+    RegexMatch,
+    convert_open_clip_to_transformers,
+    convert_transformers_to_open_clip,
+)
 
 
 def test_get_target_keys():
@@ -117,3 +125,87 @@ def test_get_target_keys_real():
         "single_layers.14.mlp.c_fc2",
         "single_layers.14.mlp.c_proj",
     ]
+
+
+def test_convert_open_clip_and_transformers():
+    open_clip_state_dict = {
+        "transformer.resblocks.0.attn.in_proj_weight": torch.randn(384, 128),
+        "transformer.resblocks.0.attn.in_proj_bias": torch.randn(384),
+        "transformer.resblocks.0.attn.out_proj.weight": torch.randn(128, 128),
+        "transformer.resblocks.0.attn.out_proj.bias": torch.randn(128),
+    }
+
+    ground_truth_state_dict_shape = {
+        "encoder.layers.0.self_attn.q_proj.weight": (128, 128),
+        "encoder.layers.0.self_attn.q_proj.bias": (128,),
+        "encoder.layers.0.self_attn.k_proj.weight": (128, 128),
+        "encoder.layers.0.self_attn.k_proj.bias": (128,),
+        "encoder.layers.0.self_attn.v_proj.weight": (128, 128),
+        "encoder.layers.0.self_attn.v_proj.bias": (128,),
+        "encoder.layers.0.self_attn.out_proj.weight": (128, 128),
+        "encoder.layers.0.self_attn.out_proj.bias": (128,),
+    }
+    transformers_state_dict = convert_open_clip_to_transformers(open_clip_state_dict)
+
+    # shape check
+    for key, shape in ground_truth_state_dict_shape.items():
+        assert transformers_state_dict[key].shape == shape, (
+            key,
+            transformers_state_dict[key].shape,
+            shape,
+        )
+
+    # convert back
+    open_clip_state_dict_converted = convert_transformers_to_open_clip(
+        transformers_state_dict
+    )
+    # key check
+    assert set(open_clip_state_dict.keys()) == set(
+        open_clip_state_dict_converted.keys()
+    ), (
+        open_clip_state_dict.keys(),
+        open_clip_state_dict_converted.keys(),
+    )
+    # value check
+    for key in open_clip_state_dict.keys():
+        assert torch.all(
+            torch.eq(open_clip_state_dict[key], open_clip_state_dict_converted[key])
+        ), (key, open_clip_state_dict[key], open_clip_state_dict_converted[key])
+
+
+def test_convert_open_clip_and_transformers_inout():
+    open_clip = {
+        ".in_proj_weight": torch.randn(384, 128),
+        ".in_proj_bias": torch.randn(384),
+        ".out_proj.weight": torch.randn(128, 128),
+        ".out_proj.bias": torch.randn(128),
+    }
+    transformers = convert_open_clip_to_transformers(open_clip)
+
+    inputs = torch.randn(2, 128)
+    open_clip_q, open_clip_k, open_clip_v = F.linear(
+        inputs, open_clip[".in_proj_weight"], open_clip[".in_proj_bias"]
+    ).chunk(3, dim=-1)
+
+    transformers_q = F.linear(
+        inputs, transformers[".q_proj.weight"], transformers[".q_proj.bias"]
+    )
+    transformers_k = F.linear(
+        inputs, transformers[".k_proj.weight"], transformers[".k_proj.bias"]
+    )
+    transformers_v = F.linear(
+        inputs, transformers[".v_proj.weight"], transformers[".v_proj.bias"]
+    )
+
+    assert torch.all(torch.eq(open_clip_q, transformers_q)), (
+        open_clip_q.shape,
+        transformers_q.shape,
+    )
+    assert torch.all(torch.eq(open_clip_k, transformers_k)), (
+        open_clip_k.shape,
+        transformers_k.shape,
+    )
+    assert torch.all(torch.eq(open_clip_v, transformers_v)), (
+        open_clip_v.shape,
+        transformers_v.shape,
+    )

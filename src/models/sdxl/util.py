@@ -40,16 +40,52 @@ def denoiser_convert_to_original_key(key: str) -> str:
 
 
 def root_convert_from_original_key(key: str) -> str:
+    # denoiser
     key = key.replace("model.diffusion_model.", "diffusion_model.", 1)
     key = key.replace("diffusion_model.", "denoiser.", 1)
-    # key = key.replace("text_encoder.", "text_encoder.model.", 1)
+
+    # text_encoder
+    key = key.replace(
+        "conditioner.embedders.0.transformer.", "text_encoder.text_encoder_1.", 1
+    )
+    key = key.replace(
+        "conditioner.embedders.1.model.text_projection",
+        "text_encoder.text_encoder_2.text_projection.weight",
+        1,
+    )  # WithProjection
+    key = key.replace(
+        "conditioner.embedders.1.model.",
+        "text_encoder.text_encoder_2.text_model.",
+        1,
+    )  # CLIPTextModel
+
+    # vae
+    # TODO
 
     return key
 
 
 def root_convert_to_original_key(key: str) -> str:
+    # denoiser
     key = key.replace("denoiser.", "model.diffusion_model.", 1)
-    # key = key.replace("text_encoder.model.", "text_encoder.", 1)
+
+    # text_encoder
+    key = key.replace(
+        "text_encoder.text_encoder_1.", "conditioner.embedders.0.transformer.", 1
+    )
+    key = key.replace(
+        "text_encoder.text_encoder_2.text_projection.weight",
+        "conditioner.embedders.1.model.text_projection",
+        1,
+    )  # WithProjection
+    key = key.replace(
+        "text_encoder.text_encoder_2.text_model.",
+        "conditioner.embedders.1.model.",
+        1,
+    )  # CLIPTextModel
+
+    # vae
+    # TODO
 
     return key
 

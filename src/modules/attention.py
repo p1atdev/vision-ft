@@ -14,6 +14,7 @@ AttentionImplementation = Literal[
     "eager",
     "flash_attention_2",
     "xformers",
+    "sdpa",
 ]
 
 
@@ -103,7 +104,7 @@ def scaled_dot_product_attention(
             v.to(attention_dtype),
         )
 
-    if backend == "eager":
+    if backend in ["eager", "sdpa"]:
         return F.scaled_dot_product_attention(
             q,
             k,
@@ -148,4 +149,4 @@ def get_attn_implementation_label(
     if use_flash_attention:
         return "flash_attention_2"
 
-    return "eager"
+    return "sdpa"

@@ -15,6 +15,8 @@ from transformers import (
     CLIPTextConfig,
 )
 from ...modules.attention import get_attn_implementation_label
+from ..utils import PromptType, TextEncodingOutput, PooledTextEncodingOutput
+
 
 # CLIP L
 DEFAULT_TEXT_ENCODER_CLIP_CONFIG = {
@@ -79,21 +81,6 @@ DEFAULT_TOKENIZER_T5_FOLDER = "tokenizer_2"
 DEFAULT_T5_MAX_TOKEN_LENGTH = 512
 
 DEFAULT_TOKENIZER_REPO = "black-forest-labs/FLUX.1-schnell"
-
-# TODO: まとめる
-PromptType: TypeAlias = str | list[str]
-
-
-class PooledTextEncodingOutput(NamedTuple):
-    positive_embeddings: torch.Tensor
-    negative_embeddings: torch.Tensor
-
-
-class TextEncodingOutput(NamedTuple):
-    positive_embeddings: torch.Tensor
-    positive_attention_mask: torch.Tensor
-    negative_embeddings: torch.Tensor
-    negative_attention_mask: torch.Tensor
 
 
 class MultipleTextEncodingOutput(NamedTuple):
