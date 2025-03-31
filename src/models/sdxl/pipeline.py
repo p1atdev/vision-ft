@@ -9,7 +9,7 @@ from safetensors.torch import load_file
 
 from .denoiser import Denoiser
 
-# from .vae import VAE
+from .vae import VAE
 from .text_encoder import TextEncoder
 from .config import SDXLConfig
 # from .scheduler import calculate_time_shift
@@ -30,9 +30,7 @@ class SDXLModel(nn.Module):
         self.config = config
 
         self.denoiser = self.denoiser_class(config.denoiser)
-        # vae = VAE.from_default()
-        # assert isinstance(vae, VAE)
-        # self.vae = vae
+        self.vae = VAE.from_default()
         self.text_encoder = TextEncoder.from_default()
 
         self.progress_bar = tqdm
@@ -63,15 +61,15 @@ class SDXLModel(nn.Module):
             strict=strict,
             assign=True,
         )
-        # self.vae.load_state_dict(
-        #     {
-        #         key[len("vae.") :]: value
-        #         for key, value in state_dict.items()
-        #         if key.startswith("vae.")
-        #     },
-        #     strict=strict,
-        #     assign=True,
-        # )
+        self.vae.load_state_dict(
+            {
+                key[len("vae.") :]: value
+                for key, value in state_dict.items()
+                if key.startswith("vae.")
+            },
+            strict=strict,
+            assign=True,
+        )
         self.text_encoder.load_state_dict(
             {
                 key[len("text_encoder.") :]: value
