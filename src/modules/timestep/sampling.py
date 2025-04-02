@@ -3,6 +3,8 @@ import math
 
 import torch
 
+# MARK: flow-match
+
 
 def get_lin_function(
     x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
@@ -105,3 +107,45 @@ def sample_timestep(
         return uniform_rand(latents_shape, device)
     else:
         raise ValueError(f"Invalid sampling type: {sampling_type}")
+
+
+# MARK: diffusion
+def uniform_randint(
+    latents_shape: torch.Size,
+    device: torch.device,
+    min_timesteps: int = 0,
+    max_timesteps: int = 1000,
+) -> torch.LongTensor:
+    batch_size = latents_shape[0]
+
+    timesteps = torch.randint(
+        low=min_timesteps,
+        high=max_timesteps,
+        size=(batch_size,),
+        device=device,
+        dtype=torch.long,
+    )
+    assert isinstance(timesteps, torch.LongTensor), "timesteps is not a LongTensor"
+
+    return timesteps
+
+
+def sigmoid_randint(
+    latents_shape: torch.Size,
+    device: torch.device,
+    min_timesteps: int = 0,
+    max_timesteps: int = 1000,
+    sigmoid_scale: float = 1.0,
+) -> torch.LongTensor:
+    batch_size = latents_shape[0]
+
+    norm_rand = torch.randn(batch_size, device=device)
+    logits_norm = norm_rand * sigmoid_scale  # larger scale for more uniform sampling
+    timesteps = logits_norm.sigmoid()  # [0, 1]
+
+    timesteps = (timesteps * (max_timesteps - min_timesteps)) + min_timesteps
+    timesteps = timesteps.round().long()
+
+    assert isinstance(timesteps, torch.LongTensor), "timesteps is not a LongTensor"
+
+    return timesteps

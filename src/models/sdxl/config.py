@@ -29,7 +29,10 @@ class DenoiserConfig(BaseModel):
     conv_resample: bool = True
     num_head_channels: int = 64
     context_dim: int = 2048
-    clip_pool_dim: int = 2816  # TODO: maybe wrong name
+    global_cond_dim: int = (
+        2816  # CLIP pooler output (1280) + additional condition (256 * 3)
+    )
+    additional_condition_dim: int = 256  # i.e. crop_coords, original_size, target_size
 
     block_out_channels: list[int] = [320, 640, 1280]
     num_transformers_per_block: list[int] = [1, 2, 10]

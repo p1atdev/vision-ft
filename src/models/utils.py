@@ -14,4 +14,6 @@ class TextEncodingOutput(NamedTuple):
 
 class PooledTextEncodingOutput(NamedTuple):
     positive_embeddings: torch.Tensor
+    pooled_positive_embeddings: torch.Tensor
     negative_embeddings: torch.Tensor
+    pooled_negative_embeddings: torch.Tensor

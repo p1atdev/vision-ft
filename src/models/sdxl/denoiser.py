@@ -886,7 +886,8 @@ class UNet(nn.Module):
         conv_resample: bool = True,
         num_head_channels: int = 64,
         context_dim: int = 2048,
-        clip_pool_dim: int = 2816,
+        global_cond_dim: int = 2816,
+        additional_cond_dim: int = 256,
         block_out_channels: list[int] = [320, 640, 1280],
         num_transformers_per_block: list[int] = [1, 2, 10],
         layers_per_block: int = 2,
@@ -915,10 +916,13 @@ class UNet(nn.Module):
 
         time_embed_dim = hidden_dim * 4
         self.time_embed_dim = time_embed_dim
+        self.additional_cond_dim = additional_cond_dim
 
         self.time_embed = MLPEmbedder(hidden_dim, time_embed_dim)
+
+        # text encoder embedder
         self.label_emb = nn.Sequential(  # to match original keys
-            MLPEmbedder(clip_pool_dim, time_embed_dim),
+            MLPEmbedder(global_cond_dim, time_embed_dim),
         )
 
         self.input_blocks = DownBlocks(
@@ -977,33 +981,99 @@ class UNet(nn.Module):
             nn.Conv2d(hidden_dim, out_channels, kernel_size=3, padding=1),
         )
 
+    def prepare_global_condition(
+        self,
+        timestep: torch.Tensor,
+        text_pooler_output: torch.Tensor,  # (batch_size, 1280)
+        original_size: torch.Tensor,  # (batch_size, 2)
+        target_size: torch.Tensor,  # (batch_size, 2)
+        crop_coords: torch.Tensor,  # (batch_size, 2)
+        dtype: torch.dtype,
+    ):
+        # 1. timestep embedding
+        time_embed = get_timestep_embedding(
+            timestep,
+            self.hidden_dim,  # 320
+        )
+        time_embed = self.time_embed(time_embed)  # (batch_size, 1280)
+
+        # 2. additional condition embedding
+        batch_size = text_pooler_output.size(0)
+
+        additional_cond = torch.cat(
+            [
+                original_size,
+                target_size,
+                crop_coords,
+            ],
+            dim=1,
+        ).flatten()  # (batch_size, 2 + 2 + 2) -> (batch_size, 6) -> (batch_size * 6)
+        additional_cond = get_timestep_embedding(
+            additional_cond,
+            self.additional_cond_dim,
+        ).reshape((batch_size, -1))
+        # (batch_size * 6) -> (batch_size * 6, 256) -> (batch_size, 6 * 256)
+
+        # 3. concat
+        global_cond = torch.cat(
+            [
+                text_pooler_output,  # (batch_size, 1280)
+                additional_cond,  # (batch_size, 6 * 256)
+            ],
+            dim=1,
+        ).to(dtype=dtype)  # (batch_size, 1280 + 6 * 256) -> (batch_size, 2816)
+
+        # 4. MLP
+        global_cond = self.label_emb(
+            global_cond
+        )  # (batch_size, 2816) -> (batch_size, 1280)
+
+        # 5. add timestep embedding
+        global_cond = (
+            # (batch_size, 1280) + (batch_size, 1280)
+            global_cond + time_embed
+        )
+
+        return global_cond
+
     def forward(
         self,
-        hidden_states: torch.Tensor,
-        timesteps: torch.Tensor,
-        context: torch.Tensor,
+        latents: torch.Tensor,  # (batch_size, 4, height, width)
+        timestep: torch.Tensor,  # (batch_size, 1)
+        encoder_hidden_states: torch.Tensor,  # (batch_size, 77 * N, 2048) torch.cat(text_embed_1, text_embed_2)
+        encoder_pooler_output: torch.Tensor,  # (batch_size, 1280)
+        original_size: torch.Tensor,  # (batch_size, 2)
+        target_size: torch.Tensor,  # (batch_size, 2)
+        crop_coords_top_left: torch.Tensor,  # (batch_size, 2)
     ) -> torch.Tensor:
-        # 1. prepare timestep embedding
-        time_embed = get_timestep_embedding(timesteps, self.hidden_dim)
-        time_embed = self.time_embed(time_embed)
+        # 1. global condition embedding
+        # global condition embedding, including timestep and image sizes
+        global_cond = self.prepare_global_condition(
+            timestep,
+            encoder_pooler_output,
+            original_size,
+            target_size,
+            crop_coords_top_left,
+            latents.dtype,
+        )
 
         # 2. down blocks
-        hidden_states, skip_connections = self.input_blocks(
-            hidden_states, context, time_embed
+        latents, skip_connections = self.input_blocks(
+            latents, encoder_hidden_states, global_cond
         )
 
         # 3. middle blocks
-        hidden_states = self.middle_block(hidden_states, context, time_embed)
+        latents = self.middle_block(latents, encoder_hidden_states, global_cond)
 
         # 4. up blocks
-        hidden_states = self.output_blocks(
-            hidden_states, time_embed, context, skip_connections
+        latents = self.output_blocks(
+            latents, global_cond, encoder_hidden_states, skip_connections
         )
 
         # 5. output
-        hidden_states = self.out(hidden_states)
+        latents = self.out(latents)
 
-        return hidden_states
+        return latents
 
 
 # MARK: Denoiser

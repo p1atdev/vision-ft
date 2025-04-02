@@ -1,7 +1,10 @@
 import os
+import tempfile
 from huggingface_hub import hf_hub_download
 
+import numpy as np
 import torch
+from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
 
 from src.models.sdxl.util import (
     unet_block_convert_from_original_key,
@@ -12,6 +15,7 @@ from src.models.sdxl.util import (
     convert_to_original_key,
 )
 from src.models.sdxl import SDXLConfig, SDXLModel, DenoiserConfig
+from src.models.sdxl.scheduler import Scheduler
 
 
 def test_unet_block_key():
@@ -168,8 +172,88 @@ def test_load_illustrious_xl():
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             latent = torch.randn(1, 4, 128, 128, device="cuda")
             timesteps = torch.randint(0, 1000, (1,), device="cuda")
-            context = torch.randn(1, 77, 2048, device="cuda")
-            output = model.denoiser(latent, timesteps, context)
+            encoder_hidden_state = torch.randn(1, 77, 2048, device="cuda")
+            encoder_pooler_output = torch.randn(1, 1280, device="cuda")
+            original_size = torch.tensor([128, 128], device="cuda").unsqueeze(0)
+            target_size = torch.tensor([128, 128], device="cuda").unsqueeze(0)
+            crop_coords_top_left = torch.tensor([0, 0], device="cuda").unsqueeze(0)
+
+            output = model.denoiser(
+                latents=latent,
+                timestep=timesteps,
+                encoder_hidden_states=encoder_hidden_state,
+                encoder_pooler_output=encoder_pooler_output,
+                original_size=original_size,
+                target_size=target_size,
+                crop_coords_top_left=crop_coords_top_left,
+            )
 
     assert output is not None, "Output is None"
     assert output.shape == latent.shape, "Output shape does not match input shape"
+
+
+def test_euler_scheduler():
+    reference = EulerDiscreteScheduler.from_pretrained(
+        "stabilityai/stable-diffusion-xl-base-1.0",
+        subfolder="scheduler",
+    )
+    scheduler = Scheduler()
+
+    test_cases = [
+        #  num_inference_steps
+        17,
+        20,
+        28,
+        50,
+    ]
+
+    for num_inference_steps in test_cases:
+        timesteps = scheduler.get_timesteps(num_inference_steps)
+        sigmas = scheduler.get_sigmas(timesteps)
+
+        reference.set_timesteps(num_inference_steps)
+
+        assert timesteps.shape == reference.timesteps.shape, (
+            f"Timesteps shape mismatch for {num_inference_steps}",
+            timesteps.shape,
+            reference.timesteps.shape,
+        )
+        assert sigmas.shape == reference.sigmas.shape, (
+            f"Sigmas shape mismatch for {num_inference_steps}",
+            sigmas.shape,
+            reference.sigmas.shape,
+        )
+
+
+def test_generate_illustrious_xl():
+    repo_name = "OnomaAIResearch/Illustrious-XL-v1.1"
+    path = hf_hub_download(
+        repo_name,
+        filename="Illustrious-XL-v1.1.safetensors",
+    )
+    assert os.path.exists(path), f"File {path} does not exist"
+
+    config = SDXLConfig(
+        checkpoint_path=path,
+        pretrained_model_name_or_path=repo_name,
+        denoiser=DenoiserConfig(attention_backend="xformers"),
+    )
+
+    model = SDXLModel.from_checkpoint(config)
+    model.to(device="cuda")
+
+    with torch.inference_mode():
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            images = model.generate(
+                prompt="1girl, solo, masterpiece, best quality",
+                negative_prompt="worst quality, low quality",
+                cfg_scale=5.0,
+                execution_dtype=torch.bfloat16,
+                device="cuda:0",
+                do_offloading=False,
+            )
+
+    with tempfile.TemporaryDirectory(delete=False) as temp_file:
+        temp_file = os.path.join(temp_file, "test.webp")
+        images[0].save(temp_file)
+        print(f"Image saved to {temp_file}")

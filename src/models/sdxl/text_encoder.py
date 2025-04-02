@@ -301,19 +301,28 @@ class TextEncoder(nn.Module):
         )
 
         # 3. Encode prompts
-        pooled_embeddings = self.text_encoder_2(
-            **text_inputs.to(self.text_encoder_2.device)
-        ).text_embeds  # https://github.com/huggingface/transformers/blob/0d6a60fe55fe051a1a68f2026d19223ed57b3c75/src/transformers/models/clip/modeling_clip.py#L1489
+        outputs = self.text_encoder_2(**text_inputs.to(self.text_encoder_2.device))
+
+        last_hidden_state = outputs.last_hidden_state
+        # https://github.com/huggingface/transformers/blob/0d6a60fe55fe051a1a68f2026d19223ed57b3c75/src/transformers/models/clip/modeling_clip.py#L1489
+        pooled_embeddings = outputs.text_embeds
 
         # 4. Split prompts and negative prompts
-        positive_embeddings = pooled_embeddings[:prompts_batch_size]
-        negative_embeddings = pooled_embeddings[prompts_batch_size:]
+        positive_embeddings = last_hidden_state[:prompts_batch_size]
+        negative_embeddings = last_hidden_state[prompts_batch_size:]
+
+        pooled_positive_embeddings = pooled_embeddings[:prompts_batch_size]
+        pooled_negative_embeddings = pooled_embeddings[prompts_batch_size:]
 
         return PooledTextEncodingOutput(
             positive_embeddings=positive_embeddings,
+            pooled_positive_embeddings=pooled_positive_embeddings,
             negative_embeddings=negative_embeddings,
+            pooled_negative_embeddings=pooled_negative_embeddings,
         )
 
+    # MARK: encode_prompts
+    # TODO: support long prompts
     def encode_prompts(
         self,
         prompts: PromptType,
