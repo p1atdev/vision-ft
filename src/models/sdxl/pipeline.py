@@ -8,9 +8,8 @@ from accelerate import init_empty_weights
 from safetensors.torch import load_file
 
 from .denoiser import Denoiser
-
 from .vae import VAE
-from .text_encoder import TextEncoder
+from .text_encoder import TextEncoder, MultipleTextEncodingOutput
 from .config import SDXLConfig
 from .scheduler import Scheduler
 
@@ -124,6 +123,7 @@ class SDXLModel(nn.Module):
         width: int,
         dtype: torch.dtype,
         device: torch.device,
+        max_noise_sigma: float | torch.Tensor,
         seed: int | None = None,
         latents: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -136,11 +136,14 @@ class SDXLModel(nn.Module):
                 int(height) // self.vae.compression_ratio,
                 int(width) // self.vae.compression_ratio,
             )
-            latents = tensor_utils.incremental_seed_randn(
-                shape,
-                seed=seed,
-                dtype=dtype,
-                device=device,
+            latents = (
+                tensor_utils.incremental_seed_randn(
+                    shape,
+                    seed=seed,
+                    dtype=dtype,
+                    device=device,
+                )
+                * max_noise_sigma
             )
         else:
             latents = latents.to(dtype=dtype, device=device)
@@ -190,6 +193,53 @@ class SDXLModel(nn.Module):
             torch.from_numpy(timesteps).to(device),
             torch.from_numpy(sigmas).to(device),
         )
+
+    def prepare_encoder_hidden_states(
+        self,
+        encoder_output: MultipleTextEncodingOutput,
+        do_cfg: bool,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if do_cfg:
+            prompt_embeddings = torch.cat(
+                [
+                    torch.cat(
+                        [
+                            encoder_output.text_encoder_1.positive_embeddings,
+                            encoder_output.text_encoder_2.positive_embeddings,
+                        ],
+                        dim=-1,
+                    ),  # (batch_size, 77, 1280) + (batch_size, 77, 768) -> (batch_size, 77, 2048)
+                    torch.cat(
+                        [
+                            encoder_output.text_encoder_1.negative_embeddings,
+                            encoder_output.text_encoder_2.negative_embeddings,
+                        ],
+                        dim=-1,
+                    ),  # (batch_size, 77, 1280) + (batch_size, 77, 768) -> (batch_size, 77, 2048)
+                ],
+                dim=0,  # concat positive and negative embeddings in batch dim
+            ).to(device)
+            pooled_prompt_embeddings = torch.cat(
+                [
+                    encoder_output.text_encoder_2.pooled_positive_embeddings,
+                    encoder_output.text_encoder_2.pooled_negative_embeddings,
+                ],
+                dim=0,
+            ).to(device)
+        else:
+            prompt_embeddings = torch.cat(
+                [
+                    encoder_output.text_encoder_1.positive_embeddings,
+                    encoder_output.text_encoder_2.positive_embeddings,
+                ],
+                dim=-1,
+            ).to(device)
+            pooled_prompt_embeddings = (
+                encoder_output.text_encoder_2.pooled_positive_embeddings.to(device)
+            )
+
+        return prompt_embeddings, pooled_prompt_embeddings
 
     # MARK: generate
     def generate(
@@ -245,51 +295,37 @@ class SDXLModel(nn.Module):
             width,
             execution_dtype,
             execution_device,
+            max_noise_sigma=self.scheduler.get_max_noise_sigma(sigmas),
             seed=seed,
         )
-        prompt_embeddings = torch.cat(
-            [
-                torch.cat(
-                    [
-                        encoder_output.text_encoder_1.positive_embeddings,
-                        encoder_output.text_encoder_2.positive_embeddings,
-                    ],
-                    dim=-1,
-                ),  # (batch_size, 77, 1280) + (batch_size, 77, 768) -> (batch_size, 77, 2048)
-                torch.cat(
-                    [
-                        encoder_output.text_encoder_1.negative_embeddings,
-                        encoder_output.text_encoder_2.negative_embeddings,
-                    ],
-                    dim=-1,
-                ),  # (batch_size, 77, 1280) + (batch_size, 77, 768) -> (batch_size, 77, 2048)
-            ],
-            dim=0,  # concat positive and negative embeddings in batch dim
-        ).to(execution_device)
-        pooled_prompt_embeddings = torch.cat(
-            [
-                encoder_output.text_encoder_2.pooled_positive_embeddings,
-                encoder_output.text_encoder_2.pooled_negative_embeddings,
-            ],
-            dim=0,
-        ).to(execution_device)
+        prompt_embeddings, pooled_prompt_embeddings = (
+            self.prepare_encoder_hidden_states(
+                encoder_output=encoder_output,
+                do_cfg=do_cfg,
+                device=execution_device,
+            )
+        )
+        original_size_tensor = original_size_tensor.expand(
+            prompt_embeddings.size(0), -1
+        )
+        target_size_tensor = target_size_tensor.expand(prompt_embeddings.size(0), -1)
+        crop_coords_tensor = crop_coords_tensor.expand(prompt_embeddings.size(0), -1)
 
         # 4. Denoise
         with self.progress_bar(total=num_inference_steps) as progress_bar:
-            # current_timestep is 1000.0 -> 1.0
+            # current_timestep is 1000 -> 1
             for i, current_timestep in enumerate(timesteps):
+                current_sigma, next_sigma = sigmas[i], sigmas[i + 1]
+
                 # expand latents if doing cfg
                 latent_model_input = torch.cat([latents] * 2) if do_cfg else latents
-                tmp_batch_size = latent_model_input.size(0)
-                # timestep as well
-                batch_timestep = current_timestep.expand(tmp_batch_size).to(
-                    latents.device, dtype=latents.dtype
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, current_sigma
                 )
-                batch_original_size_tensor = original_size_tensor.repeat(
-                    tmp_batch_size, 1
+
+                batch_timestep = current_timestep.expand(latent_model_input.size(0)).to(
+                    execution_device
                 )
-                batch_target_size_tensor = target_size_tensor.repeat(tmp_batch_size, 1)
-                batch_crop_coords_tensor = crop_coords_tensor.repeat(tmp_batch_size, 1)
 
                 # predict noise model_output
                 noise_pred = self.denoiser(
@@ -297,9 +333,9 @@ class SDXLModel(nn.Module):
                     timestep=batch_timestep,
                     encoder_hidden_states=prompt_embeddings,
                     encoder_pooler_output=pooled_prompt_embeddings,
-                    original_size=batch_original_size_tensor,
-                    target_size=batch_target_size_tensor,
-                    crop_coords_top_left=batch_crop_coords_tensor,
+                    original_size=original_size_tensor,
+                    target_size=target_size_tensor,
+                    crop_coords_top_left=crop_coords_tensor,
                 )
 
                 # perform cfg
@@ -310,9 +346,11 @@ class SDXLModel(nn.Module):
                     )
 
                 # denoise the latents
-                next_sigma = sigmas[i + 1]
-                current_sigma = sigmas[i]
-                latents = latents + noise_pred * (next_sigma - current_sigma)
+                # TODO: make simple here
+                pred_original_sample = latents - current_sigma * noise_pred
+                derivative = (latents - pred_original_sample) / current_sigma
+                dt = next_sigma - current_sigma  # delta timestep
+                latents = latents + derivative * dt
 
                 progress_bar.update()
 

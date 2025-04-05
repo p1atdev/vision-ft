@@ -43,3 +43,16 @@ class Scheduler:
         sigmas = np.concat([sigmas, [0]]).astype(np.float32)
 
         return sigmas
+
+    def get_max_noise_sigma(self, sigmas: torch.Tensor) -> torch.Tensor:
+        max_sigma = sigmas.max()
+        return (max_sigma.pow(2) + 1).sqrt()
+
+    def scale_model_input(
+        self,
+        sample: torch.Tensor,
+        current_sigma: torch.Tensor,
+    ) -> torch.Tensor:
+        sample = sample / ((current_sigma.pow(2) + 1).sqrt())
+
+        return sample
