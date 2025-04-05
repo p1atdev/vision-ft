@@ -549,6 +549,22 @@ class ResidualBlock(nn.Module):
 # MARK: UNet blocks
 
 
+def _forward_layer(
+    layer: nn.Module,
+    *args,
+    gradient_checkpointing: bool = False,
+    use_reentrant: bool = False,
+) -> torch.Tensor:
+    if torch.is_grad_enabled() and gradient_checkpointing:
+        return checkpoint.checkpoint(  # type: ignore
+            layer,
+            *args,
+            use_reentrant=use_reentrant,
+        )
+    else:
+        return layer(*args)
+
+
 class DownBlocksOutput(NamedTuple):
     hidden_states: torch.Tensor
     skip_connections: list[torch.Tensor]
@@ -661,6 +677,8 @@ class DownBlocks(nn.Module):
                     )
                 )
 
+        self.gradient_checkpointing = False
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -675,14 +693,32 @@ class DownBlocks(nn.Module):
 
             for layer in layer_list:
                 if isinstance(layer, ResidualBlock):
-                    hidden_states = layer(hidden_states, embedding)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        embedding,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
                 elif isinstance(layer, SpatialTransformer):
-                    hidden_states = layer(hidden_states, context)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        context,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
                 elif isinstance(layer, Downsample):
-                    hidden_states = layer(hidden_states)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
                 else:
                     # Conv2d
-                    hidden_states = layer(hidden_states)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
 
             skip_connections.append(hidden_states)
 
@@ -736,6 +772,8 @@ class MidBlock(nn.Module):
             )
         )
 
+        self.gradient_checkpointing = False
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -744,9 +782,19 @@ class MidBlock(nn.Module):
     ) -> torch.Tensor:
         for layer in self.blocks:
             if isinstance(layer, ResidualBlock):
-                hidden_states = layer(hidden_states, embedding)
+                hidden_states = _forward_layer(
+                    layer,
+                    hidden_states,
+                    embedding,
+                    gradient_checkpointing=self.gradient_checkpointing,
+                )
             elif isinstance(layer, SpatialTransformer):
-                hidden_states = layer(hidden_states, context)
+                hidden_states = _forward_layer(
+                    layer,
+                    hidden_states,
+                    context,
+                    gradient_checkpointing=self.gradient_checkpointing,
+                )
             else:
                 raise ValueError(f"Invalid layer: {layer}")
 
@@ -846,6 +894,8 @@ class UpBlocks(nn.Module):
                     )
                 )
 
+        self.gradient_checkpointing = False
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -862,11 +912,25 @@ class UpBlocks(nn.Module):
 
             for layer in layer_list:
                 if isinstance(layer, ResidualBlock):
-                    hidden_states = layer(hidden_states, embedding)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        embedding,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
                 elif isinstance(layer, SpatialTransformer):
-                    hidden_states = layer(hidden_states, context)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        context,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
                 elif isinstance(layer, Upsample):
-                    hidden_states = layer(hidden_states)
+                    hidden_states = _forward_layer(
+                        layer,
+                        hidden_states,
+                        gradient_checkpointing=self.gradient_checkpointing,
+                    )
                 else:
                     raise ValueError(f"Invalid layer: {layer}")
 
@@ -1114,3 +1178,6 @@ class Denoiser(UNet):
 
     def set_gradient_checkpointing(self, gradient_checkpointing: bool):
         self.gradient_checkpointing = gradient_checkpointing
+        self.input_blocks.gradient_checkpointing = gradient_checkpointing
+        self.middle_block.gradient_checkpointing = gradient_checkpointing
+        self.output_blocks.gradient_checkpointing = gradient_checkpointing
