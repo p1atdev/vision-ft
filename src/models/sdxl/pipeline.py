@@ -363,3 +363,6 @@ class SDXLModel(nn.Module):
             torch.cuda.empty_cache()
 
         return image
+
+    def forward(self, *args, **kwargs):
+        return self.denoiser(*args, **kwargs)

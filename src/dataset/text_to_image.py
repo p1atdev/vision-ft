@@ -6,12 +6,13 @@ import warnings
 import json
 from functools import reduce
 from collections import defaultdict
-from typing import Sequence, Iterator
+from typing import Sequence, Iterator, NamedTuple
 
 import numpy as np
 import torch
 import torch.utils.data as data
 import torchvision.transforms.v2 as v2
+import torchvision.transforms.v2.functional as TF
 import torchvision.io as io
 
 from datasets import Dataset
@@ -49,6 +50,18 @@ class ImageCaptionPair(BaseModel):
         return metadata["tag_string"]
 
 
+class RandomCropOutput(NamedTuple):
+    image: torch.Tensor
+
+    top: int
+    left: int
+    crop_height: int
+    crop_width: int
+
+    original_height: int
+    original_width: int
+
+
 class TextToImageBucket(AspectRatioBucket):
     """
     Bucket for Text to Image dataset.
@@ -75,18 +88,19 @@ class TextToImageBucket(AspectRatioBucket):
         )
 
         super().__init__(
-            items=ds,  # type: ignore (Dataset is compatible with Sequence)
+            # (Dataset is compatible with Sequence)
+            items=ds,  # type: ignore
             batch_size=batch_size,
         )
 
         # random crop
-        self.image_transform = v2.Compose(
+        self.resize_transform = ObjectCoverResize(
+            width,
+            height,
+            do_upscale=do_upscale,
+        )
+        self.tensor_transform = v2.Compose(
             [
-                ObjectCoverResize(
-                    width,
-                    height,
-                    do_upscale=do_upscale,
-                ),
                 v2.RandomCrop(size=(height, width), padding=None),
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
                 v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
@@ -99,6 +113,21 @@ class TextToImageBucket(AspectRatioBucket):
         self.num_repeats = num_repeats
         self.caption_processors = caption_processors
 
+    def random_crop(self, image: torch.Tensor) -> RandomCropOutput:
+        top, left, crop_height, crop_width = v2.RandomCrop.get_params(
+            image, (self.height, self.width)
+        )
+        cropped_img = TF.crop(image, top, left, crop_height, crop_width)
+        return RandomCropOutput(
+            image=cropped_img,
+            top=top,
+            left=left,
+            crop_height=crop_height,
+            crop_width=crop_width,
+            original_height=image.shape[1],
+            original_width=image.shape[2],
+        )
+
     def __getitem__(self, idx: int | slice):
         # the __len__ is multiplied by num_repeats,
         # so the provided idx may be larger than the length of the dataset.
@@ -110,10 +139,27 @@ class TextToImageBucket(AspectRatioBucket):
         if "image" in batch:
             # this is a list of image paths
             image_paths: list[str] = batch["image"]  # type: ignore
-            images = [io.decode_image(image_path) for image_path in image_paths]
+            _images = [io.decode_image(image_path) for image_path in image_paths]
             #  convert to tensor and apply transforms
-            images = [self.image_transform(image) for image in images]
+            _images = [self.resize_transform(image) for image in _images]
+
+            images: list[torch.Tensor] = []
+            original_size: list[torch.Tensor] = []
+            target_size: list[torch.Tensor] = []
+            crop_coords_top_left: list[torch.Tensor] = []
+            for image in _images:
+                crop_image, top, left, crop_height, crop_width, height, width = (
+                    self.random_crop(image)
+                )
+                images.append(self.tensor_transform(crop_image))
+                original_size.append(torch.tensor([height, width]))
+                target_size.append(torch.tensor([crop_height, crop_width]))
+                crop_coords_top_left.append(torch.tensor([top, left]))
+
             batch["image"] = torch.stack(images)
+            batch["original_size"] = torch.stack(original_size)
+            batch["target_size"] = torch.stack(target_size)
+            batch["crop_coords_top_left"] = torch.stack(crop_coords_top_left)
 
         if "caption" in batch:
             captions: list[str] = batch["caption"]  # type: ignore
@@ -197,7 +243,7 @@ class TextToImageDatasetConfig(AspectRatioBucketConfig):
 
         return pairs
 
-    def generate_buckets(self) -> list[TextToImageBucket]:
+    def generate_buckets(self) -> list[TextToImageBucket]:  # type: ignore
         # aspect ratio buckets
         ar_buckets: np.ndarray = self.buckets
         arb_manager = AspectRatioBucketManager(ar_buckets)
@@ -210,9 +256,9 @@ class TextToImageDatasetConfig(AspectRatioBucketConfig):
                 bucket_idx = arb_manager.find_nearest(pair.width, pair.height)
                 bucket_subsets[bucket_idx].append(pair)
                 # TODO: implement upscale
-            except:
+            except Exception as e:
                 warnings.warn(
-                    f"Image size {pair.width}x{pair.height} is too small, and `do_upscale` is set False. Skipping...",
+                    f"Image size {pair.width}x{pair.height} is too small, and `do_upscale` is set False. Skipping... \n{e}",
                     UserWarning,
                 )
                 continue

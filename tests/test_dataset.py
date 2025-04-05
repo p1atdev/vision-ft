@@ -68,5 +68,17 @@ def test_text_to_image_dataset():
         # image is -1 ~ 1 and must not be pure black (-1)
         assert img.max() > -1
 
+        # crop size data
+        keys = [
+            "original_size",
+            "target_size",
+            "crop_coords_top_left",
+        ]
+        for key in keys:
+            value = batch[key]
+            assert value is not None
+            assert isinstance(value, torch.Tensor)
+            assert value.shape == (batch_size, 2)
+
         if i > 10:
             break

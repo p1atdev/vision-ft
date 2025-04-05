@@ -115,7 +115,7 @@ def uniform_randint(
     device: torch.device,
     min_timesteps: int = 0,
     max_timesteps: int = 1000,
-) -> torch.LongTensor:
+) -> torch.IntTensor:
     batch_size = latents_shape[0]
 
     timesteps = torch.randint(
@@ -123,9 +123,9 @@ def uniform_randint(
         high=max_timesteps,
         size=(batch_size,),
         device=device,
-        dtype=torch.long,
+        dtype=torch.int,
     )
-    assert isinstance(timesteps, torch.LongTensor), "timesteps is not a LongTensor"
+    assert isinstance(timesteps, torch.IntTensor), "timesteps is not a LongTensor"
 
     return timesteps
 
