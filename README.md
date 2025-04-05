@@ -11,7 +11,7 @@ WIP
 
 ### Models
 
-- [ ] SDXL (WIP)
+- [x] SDXL
 - [x] AuraFlow
 - [ ] Flux & Flex (WIP)
 - [ ] CogView4 (WIP)
