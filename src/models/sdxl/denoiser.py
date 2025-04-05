@@ -469,7 +469,7 @@ class ResidualBlock(nn.Module):
         padding = kernel_size // 2
 
         self.in_layers = nn.Sequential(
-            nn.GroupNorm(num_norm_groups, hidden_dim, eps=1e-6, affine=True),
+            nn.GroupNorm(num_norm_groups, hidden_dim, eps=1e-5, affine=True),
             nn.SiLU(),
             nn.Conv2d(
                 hidden_dim,
@@ -499,7 +499,7 @@ class ResidualBlock(nn.Module):
         )
 
         self.out_layers = nn.Sequential(
-            nn.GroupNorm(num_norm_groups, out_channels, eps=1e-6, affine=True),
+            nn.GroupNorm(num_norm_groups, out_channels, eps=1e-5, affine=True),
             nn.SiLU(),
             nn.Dropout(dropout),
             nn.Conv2d(
@@ -976,9 +976,17 @@ class UNet(nn.Module):
         )
 
         self.out = nn.Sequential(
-            nn.GroupNorm(32, hidden_dim, eps=1e-6, affine=True),
+            nn.GroupNorm(32, hidden_dim, eps=1e-5, affine=True),
             nn.SiLU(),
             nn.Conv2d(hidden_dim, out_channels, kernel_size=3, padding=1),
+        )
+
+    def get_timestep_embedding(self, timestep: torch.Tensor, dim: int) -> torch.Tensor:
+        return get_timestep_embedding(
+            timestep,
+            embedding_dim=dim,
+            flip_sin_to_cos=True,
+            downscale_freq_shift=0.0,
         )
 
     def prepare_global_condition(
@@ -991,7 +999,7 @@ class UNet(nn.Module):
         dtype: torch.dtype,
     ):
         # 1. timestep embedding
-        time_embed = get_timestep_embedding(
+        time_embed = self.get_timestep_embedding(
             timestep,
             self.hidden_dim,  # 320
         )
@@ -1003,12 +1011,12 @@ class UNet(nn.Module):
         additional_cond = torch.cat(
             [
                 original_size,
-                target_size,
                 crop_coords,
+                target_size,
             ],
             dim=1,
         ).flatten()  # (batch_size, 2 + 2 + 2) -> (batch_size, 6) -> (batch_size * 6)
-        additional_cond = get_timestep_embedding(
+        additional_cond = self.get_timestep_embedding(
             additional_cond,
             self.additional_cond_dim,
         ).reshape((batch_size, -1))
