@@ -346,11 +346,7 @@ class SDXLModel(nn.Module):
                     )
 
                 # denoise the latents
-                # TODO: make simple here
-                pred_original_sample = latents - current_sigma * noise_pred
-                derivative = (latents - pred_original_sample) / current_sigma
-                dt = next_sigma - current_sigma  # delta timestep
-                latents = latents + derivative * dt
+                latents = latents + noise_pred * (next_sigma - current_sigma)
 
                 progress_bar.update()
 
