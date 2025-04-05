@@ -17,6 +17,7 @@ from .util import convert_to_original_key, convert_from_original_key
 
 from ...modules.quant import replace_by_prequantized_weights
 from ...utils import tensor as tensor_utils
+from ...utils.state_dict import convert_transformers_to_open_clip
 
 
 class SDXLModel(nn.Module):
@@ -109,8 +110,23 @@ class SDXLModel(nn.Module):
             for key, value in state_dict.items()
         }
 
+        text_encoder_2 = convert_transformers_to_open_clip(
+            {
+                k: v
+                for k, v in state_dict.items()
+                if k.startswith("text_encoder.text_encoder_2.")
+            }
+        )
         state_dict = {
-            convert_to_original_key(key): value for key, value in state_dict.items()
+            convert_to_original_key(k): v
+            for k, v in {
+                **{
+                    key: value
+                    for key, value in state_dict.items()
+                    if not key.startswith("text_encoder.text_encoder_2.")
+                },
+                **text_encoder_2,
+            }.items()
         }
 
         return state_dict

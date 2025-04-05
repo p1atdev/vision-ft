@@ -70,24 +70,7 @@ DEFAULT_TEXT_ENCODER_2_CONFIG = {
 }
 
 
-class OpenClipCompatibleCLIP(CLIPTextModelWithProjection):
-    def state_dict(  # type: ignore
-        self,
-        destination: dict[str, torch.Tensor] | None = None,
-        prefix: str = "",
-        keep_vars: bool = False,
-    ) -> dict[str, torch.Tensor]:
-        state_dict = super().state_dict(
-            destination=destination,  # type: ignore
-            prefix=prefix,
-            keep_vars=keep_vars,
-        )
-        state_dict = convert_transformers_to_open_clip(state_dict)
-
-        return state_dict
-
-
-DEFAULT_TEXT_ENCODER_2_CLASS = OpenClipCompatibleCLIP
+DEFAULT_TEXT_ENCODER_2_CLASS = CLIPTextModelWithProjection
 DEFAULT_TEXT_ENCODER_2_CONFIG_CLASS = CLIPTextConfig
 DEFAULT_TOKENIZER_2_FOLDER = "tokenizer_2"
 DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH = 77
