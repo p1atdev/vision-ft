@@ -77,7 +77,7 @@ class VAE(AutoencoderKL):
             return state_dict
 
         for key in list(state_dict.keys()):
-            if re.search(r".*\.to_(q|k|v|out)\.(\d+\.)?weight$", key):
+            if re.search(r"vae\..*\.to_(q|k|v|out)\.(\d+\.)?weight$", key):
                 value = state_dict[key]
                 if value.dim() == 2:
                     # [512, 512] -> [512, 512, 1, 1]

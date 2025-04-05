@@ -17,7 +17,9 @@ from .util import convert_to_original_key, convert_from_original_key
 
 from ...modules.quant import replace_by_prequantized_weights
 from ...utils import tensor as tensor_utils
-from ...utils.state_dict import convert_transformers_to_open_clip
+from ...utils.state_dict import (
+    convert_transformers_to_open_clip,
+)
 
 
 class SDXLModel(nn.Module):
@@ -49,6 +51,20 @@ class SDXLModel(nn.Module):
         state_dict = load_file(config.checkpoint_path)
         state_dict = {
             convert_from_original_key(key): value for key, value in state_dict.items()
+        }
+        text_encoder_1_state_dict, text_encoder_2_state_dict = (
+            self.text_encoder.prepare_state_dict(
+                {k: v for k, v in state_dict.items() if k.startswith("text_encoder.")}
+            )
+        )
+        state_dict = {
+            **text_encoder_1_state_dict,
+            **text_encoder_2_state_dict,
+            **{
+                key: value
+                for key, value in state_dict.items()
+                if not key.startswith("text_encoder.")
+            },
         }
 
         # prepare for prequantized weights
@@ -303,7 +319,7 @@ class SDXLModel(nn.Module):
             torch.cuda.empty_cache()
 
         # 3. Prepare latents, etc.
-        if do_offloading and self.denoiser.offload_strategy is None:
+        if do_offloading:
             self.denoiser.to(execution_device)
         latents = self.prepare_latents(
             batch_size,

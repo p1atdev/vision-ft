@@ -136,46 +136,20 @@ class TextEncoder(nn.Module):
             tokenizer_2=tokenizer_2,
         )
 
-    def load_state_dict(
-        self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False
-    ):
+    def prepare_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         text_encoder_1 = {
             k: v
             for k, v in state_dict.items()
-            if k.startswith("text_encoder_1.") and ".embeddings.position_ids" not in k
+            if "text_encoder_1." in k and ".embeddings.position_ids" not in k
         }
         text_encoder_2 = convert_open_clip_to_transformers(
-            {k: v for k, v in state_dict.items() if k.startswith("text_encoder_2.")}
+            {k: v for k, v in state_dict.items() if "text_encoder_2." in k}
         )
 
-        return super().load_state_dict(
-            {
-                **text_encoder_1,
-                **text_encoder_2,
-            },
-            strict,
-            assign,
-        )
-
-    def _load_from_state_dict(
-        self,
-        state_dict: dict[str, torch.Tensor],
-        prefix: str,
-        local_metadata: dict,
-        strict: bool,
-        missing_keys: list[str],
-        unexpected_keys: list[str],
-        error_msgs: list[str],
-    ):
-        return super()._load_from_state_dict(
-            state_dict,
-            prefix,
-            local_metadata,
-            strict,
-            missing_keys,
-            unexpected_keys,
-            error_msgs,
-        )
+        return text_encoder_1, text_encoder_2
 
     def escape_exclamation(self, text: str) -> str:
         return text.replace("!", " !")  # add prefix space
