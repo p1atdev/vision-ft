@@ -207,3 +207,21 @@ def convert_to_original_key(key: str) -> str:
     key = root_convert_to_original_key(key)
 
     return key
+
+
+def convert_to_comfy_key(key: str) -> str:
+    # text_encoder -> clip_l (diffusers)
+    key = key.replace("text_encoder.text_encoder_1.", "clip_l.", 1)
+
+    # text_encoder_2 -> clip_g (diffusers)
+    key = key.replace("text_encoder.text_encoder_2.", "clip_g.", 1)
+
+    # denoiser -> diffusion_model (sgm)
+    if key.startswith("denoiser."):
+        key = denoiser_convert_to_original_key(key)
+        key = key.replace("denoiser.", "diffusion_model.", 1)
+
+    # vae -> vae (diffusers)
+    #
+
+    return key
