@@ -7,14 +7,13 @@ import torch.optim as optim
 import torch.utils.data as data
 
 from accelerate import Accelerator
-from accelerate.utils import broadcast_object_list
 from transformers import set_seed
 
 from ..config import TrainConfig, DEBUG_MODE_TYPE
 from ..saving import ModelSavingStrategy, get_saving_callback
 from ..preview import PreviewStrategy, get_preview_callback
 from ..dataset.util import DatasetConfig
-from ..dataloader import get_dataloader, get_dataloader_for_preview, list_collate_fn
+from ..dataloader import get_dataloader_for_bucketing, get_dataloader_for_preview
 from ..utils.logging import get_trackers
 from ..utils.safetensors import load_file_with_rename_key_map
 from ..optimizer import get_optimizer
@@ -112,12 +111,10 @@ class Trainer:
     def prepare_dataloaders(self):
         train_ds = self.dataset_config.get_dataset()
 
-        train_dataloader = get_dataloader(
+        train_dataloader = get_dataloader_for_bucketing(
             train_ds,
-            batch_size=self.dataset_config.batch_size,
             shuffle=self.dataset_config.shuffle,
             num_workers=self.dataset_config.num_workers,
-            collate_fn=list_collate_fn,
         )
         self.train_dataloader = self.accelerator.prepare_data_loader(train_dataloader)
         # TODO: eval
