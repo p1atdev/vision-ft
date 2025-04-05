@@ -24,7 +24,6 @@ class DenoiserConfig(BaseModel):
     out_channels: int = 4
 
     hidden_dim: int = 320
-    # attention_resolutions: list[int] = [4, 2]
     channel_multipiler: list[int] = [1, 2, 4]
     conv_resample: bool = True
     num_head_channels: int = 64

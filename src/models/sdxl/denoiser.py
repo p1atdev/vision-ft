@@ -1103,6 +1103,7 @@ class Denoiser(UNet):
             down_blocks=config.down_blocks,
             mid_block=config.mid_block,
             up_blocks=config.up_blocks,
+            attn_implementation=config.attention_backend,
         )
 
         self.config = config
