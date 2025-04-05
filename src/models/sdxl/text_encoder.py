@@ -156,9 +156,10 @@ class TextEncoder(nn.Module):
     def load_state_dict(
         self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False
     ):
-        # text_encoder_1 と text_encoder_2 のキーを分離
         text_encoder_1 = {
-            k: v for k, v in state_dict.items() if k.startswith("text_encoder_1.")
+            k: v
+            for k, v in state_dict.items()
+            if k.startswith("text_encoder_1.") and ".embeddings.position_ids" not in k
         }
         text_encoder_2 = convert_open_clip_to_transformers(
             {k: v for k, v in state_dict.items() if k.startswith("text_encoder_2.")}
@@ -251,16 +252,17 @@ class TextEncoder(nn.Module):
 
         # 3. Encode prompts
         prompt_encodings = self.text_encoder_1(
-            **text_inputs.to(self.text_encoder_1.device)
-        ).last_hidden_state
+            text_inputs.input_ids.to(self.text_encoder_1.device),
+            output_hidden_states=True,  # to get penultimate layer
+        ).hidden_states[-2]  # penultimate layer
 
         # 4. Get attention mask
         attention_mask = text_inputs.attention_mask.unsqueeze(-1).expand(
             prompt_encodings.shape
         )
 
-        # 5. Mask out negative prompts
-        prompt_encodings = prompt_encodings * attention_mask
+        # # 5. Mask out negative prompts
+        # prompt_encodings = prompt_encodings * attention_mask
 
         # 6. Split prompts and negative prompts
         positive_embeddings = prompt_encodings[:prompts_len]
@@ -301,15 +303,18 @@ class TextEncoder(nn.Module):
         )
 
         # 3. Encode prompts
-        outputs = self.text_encoder_2(**text_inputs.to(self.text_encoder_2.device))
+        outputs = self.text_encoder_2(
+            text_inputs.input_ids.to(self.text_encoder_2.device),
+            output_hidden_states=True,  # to get penultimate layer
+        )
 
-        last_hidden_state = outputs.last_hidden_state
+        encoder_hidden_state = outputs.hidden_states[-2]  # penultimate layer
         # https://github.com/huggingface/transformers/blob/0d6a60fe55fe051a1a68f2026d19223ed57b3c75/src/transformers/models/clip/modeling_clip.py#L1489
         pooled_embeddings = outputs.text_embeds
 
         # 4. Split prompts and negative prompts
-        positive_embeddings = last_hidden_state[:prompts_batch_size]
-        negative_embeddings = last_hidden_state[prompts_batch_size:]
+        positive_embeddings = encoder_hidden_state[:prompts_batch_size]
+        negative_embeddings = encoder_hidden_state[prompts_batch_size:]
 
         pooled_positive_embeddings = pooled_embeddings[:prompts_batch_size]
         pooled_negative_embeddings = pooled_embeddings[prompts_batch_size:]
