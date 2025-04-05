@@ -32,6 +32,12 @@ dataset:
   min_size: 384
   do_upscale: false
 
+  # caption_processors:
+  #   - type: shuffle
+  #     split_separator: ","
+  #   - type: prefix
+  #     prefix: "sks style, "
+
 optimizer:
   name: "schedulefree.RAdamScheduleFree"
   # name: "bitsandbytes.optim.AdamW8bit"
