@@ -1,0 +1,85 @@
+model:
+  checkpoint_path: "./models/animagine-xl-4.0-opt.bnb_nf4.safetensors"
+  pretrained_model_name_or_path: cagliostrolab/animagine-xl-4.0
+
+  dtype: bfloat16
+
+  denoiser:
+    attn_implementation: "flash_attention_2"
+
+peft:
+  config:
+    type: lora
+    rank: 4
+    alpha: 1.0
+    dropout: 0.0
+
+    dtype: bfloat16
+
+  include_keys:
+    - "attn1"
+    - "attn2"
+    - ".ff."
+  exclude_keys: ["text_encoder", "vae"]
+
+dataset:
+  folder: "data/sfw_0.1k/images"
+  num_repeats: 4
+  batch_size: 2
+
+  bucket_base_size: 1024
+  step: 128
+  min_size: 384
+  do_upscale: false
+
+optimizer:
+  name: "schedulefree.RAdamScheduleFree"
+  # name: "bitsandbytes.optim.AdamW8bit"
+  args:
+    lr: 0.001
+
+scheduler:
+  # name: "torch.optim.lr_scheduler.ConstantLR"
+  # args: {}
+
+tracker:
+  project_name: "sdxl-lora-1"
+  loggers:
+    - wandb
+
+saving:
+  strategy:
+    per_epochs: 1
+    per_steps: null
+    save_last: true
+
+  callbacks:
+    - type: "safentensors" # or "hf_hub" to push to hub
+      name: "sdxl-lora"
+      save_dir: "./output/sdxl-lora"
+
+preview:
+  strategy:
+    per_epochs: 1
+    per_steps: null
+
+  callbacks:
+    - type: "local"
+      save_dir: "./output/sdxl-lora/preview"
+
+  data:
+    path: "./configs/sdxl/preview.yml"
+
+seed: 42
+num_train_epochs: 10
+
+trainer:
+  # debug_mode: "1step"
+
+  gradient_checkpointing: true
+
+  torch_compile: false
+  torch_compile_args:
+    mode: max-autotune
+    fullgraph: true
+  fp32_matmul_precision: "high"
