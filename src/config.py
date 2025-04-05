@@ -53,12 +53,6 @@ class TrackerConfig(BaseModel):
     project_name: str
     loggers: list[Literal["wandb", "tensorboard"]]
 
-    @field_validator("loggers")
-    def check_loggers(cls, v, values):
-        if len(v) == 0:
-            raise ValueError("At least one logger should be provided")
-        return v
-
 
 DEBUG_MODE_TYPE = Literal[
     False,  # not debug mode
