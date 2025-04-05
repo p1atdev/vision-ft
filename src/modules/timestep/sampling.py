@@ -124,10 +124,9 @@ def uniform_randint(
         size=(batch_size,),
         device=device,
         dtype=torch.int,
-    )
-    assert isinstance(timesteps, torch.IntTensor), "timesteps is not a LongTensor"
+    ).int()
 
-    return timesteps
+    return timesteps  # type: ignore[return-value]
 
 
 def sigmoid_randint(
