@@ -47,6 +47,7 @@ dev-dependencies = [
     "litserve>=0.2.5",
     "gradio>=5.9.1",
     "seaborn>=0.13.2",
+    "comfyui",
 ]
 no-build-isolation-package = ["flash-attn"]
 
@@ -76,6 +77,7 @@ torchvision = [
 ]
 huggingface-dl = { git = "https://github.com/p1atdev/huggingface_dl" }
 diffusers = { git = "https://github.com/huggingface/diffusers" }
+comfyui = { git = "https://github.com/p1atdev/ComfyUI", rev = "lib" }
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
