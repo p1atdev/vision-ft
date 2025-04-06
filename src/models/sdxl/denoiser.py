@@ -109,6 +109,7 @@ class CrossAttention(nn.Module):
         self.inner_dim = num_heads * head_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
+        self.dropout = dropout
         self.attn_implementation: AttentionImplementation = attn_implementation
 
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=False)
