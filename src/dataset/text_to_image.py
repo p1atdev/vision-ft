@@ -1,6 +1,7 @@
 import os
 import imagesize
 from pathlib import Path
+from PIL import Image
 from pydantic import BaseModel
 import warnings
 import json
@@ -94,16 +95,21 @@ class TextToImageBucket(AspectRatioBucket):
         )
 
         # random crop
-        self.resize_transform = ObjectCoverResize(
-            width,
-            height,
-            do_upscale=do_upscale,
-        )
-        self.tensor_transform = v2.Compose(
+        self.resize_transform = v2.Compose(
             [
-                v2.RandomCrop(size=(height, width), padding=None),
+                v2.PILToTensor(),  # PIL -> Tensor
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
                 v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
+                ObjectCoverResize(
+                    width,
+                    height,
+                    do_upscale=do_upscale,
+                ),
+            ]
+        )
+        self.crop_transform = v2.Compose(
+            [
+                v2.RandomCrop(size=(height, width), padding=None),
             ]
         )
 
@@ -139,9 +145,10 @@ class TextToImageBucket(AspectRatioBucket):
         if "image" in batch:
             # this is a list of image paths
             image_paths: list[str] = batch["image"]  # type: ignore
-            _images = [io.decode_image(image_path) for image_path in image_paths]
+            # _images = [io.decode_image(image_path) for image_path in image_paths]
+            _pil_images = [Image.open(image_path) for image_path in image_paths]
             #  convert to tensor and apply transforms
-            _images = [self.resize_transform(image) for image in _images]
+            _images = [self.resize_transform(image) for image in _pil_images]
 
             images: list[torch.Tensor] = []
             original_size: list[torch.Tensor] = []
@@ -151,7 +158,7 @@ class TextToImageBucket(AspectRatioBucket):
                 crop_image, top, left, crop_height, crop_width, height, width = (
                     self.random_crop(image)
                 )
-                images.append(self.tensor_transform(crop_image))
+                images.append(self.crop_transform(crop_image))
                 original_size.append(torch.tensor([height, width]))
                 target_size.append(torch.tensor([crop_height, crop_width]))
                 crop_coords_top_left.append(torch.tensor([top, left]))
