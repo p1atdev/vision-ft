@@ -29,6 +29,6 @@ class PeftLayer(ABC, nn.Module):
     def from_weights(
         cls,
         adapter_weights: dict[str, torch.Tensor],
-        original_linear: nn.Linear,
+        original_layer: nn.Module,
     ) -> "PeftLayer":
         pass

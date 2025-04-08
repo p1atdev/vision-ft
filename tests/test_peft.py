@@ -7,6 +7,7 @@ from safetensors.torch import save_file
 from src.modules.peft import (
     LoRAConfig,
     LoRALinear,
+    LoRAConv2d,
     get_adapter_parameters,
     PeftTargetConfig,
 )
@@ -91,6 +92,110 @@ def test_replace_lora_linear():
     assert isinstance(model.last_layer[0], LoRALinear)
     assert model.last_layer[0].lora_down.weight.T.shape == torch.Size([10, 4])
     assert model.last_layer[0].lora_up.weight.T.shape == torch.Size([4, 20])
+
+    lora_output = model(inputs)
+
+    # must be equal because initial LoRA output is zero
+    assert torch.equal(original_output, lora_output)
+
+    # lora module must be trainable
+    for name, param in model.named_parameters():
+        if "lora_" in name:
+            assert param.requires_grad is True
+        else:
+            assert param.requires_grad is False, name
+
+    adapter_params = get_adapter_parameters(model)
+    assert (
+        len(adapter_params) == 9
+    )  # layer1.0.lora_up.weight, layer1.0.lora_down.weight, layer1.0.alpha
+    assert sorted(adapter_params.keys()) == sorted(
+        [
+            "layer1.0.lora_down.weight",
+            "layer1.0.lora_up.weight",
+            "layer1.0.alpha",
+            "child.child_1.lora_down.weight",
+            "child.child_1.lora_up.weight",
+            "child.child_1.alpha",
+            "last_layer.0.lora_down.weight",
+            "last_layer.0.lora_up.weight",
+            "last_layer.0.alpha",
+        ]
+    )
+
+
+@torch.no_grad()
+def test_replace_lora_conv2d():
+    class ChildLayer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.child_1 = nn.Conv2d(3, 3, kernel_size=3, padding=3)  # <- target
+            self.child_extra = nn.Conv2d(3, 3, kernel_size=3, padding=3)
+
+        def forward(self, x):
+            out = self.child_1(x)
+            out = self.child_extra(out)
+            return out
+
+    class TestModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Sequential(
+                nn.Conv2d(3, 3, kernel_size=3, padding=3),  # <- target
+                nn.ReLU(),
+                nn.Conv2d(3, 3, kernel_size=3, padding=3),
+            )
+            self.layer2 = nn.Sequential(
+                nn.Conv2d(3, 3, kernel_size=3, padding=3),
+                nn.ReLU(),
+                nn.Conv2d(3, 3, kernel_size=3, padding=3),
+            )
+            self.child = ChildLayer()
+            self.last_layer = nn.ModuleList(
+                [
+                    nn.Conv2d(3, 1, kernel_size=3, padding=3),  # <- target
+                ]
+            )
+
+        def forward(self, x):
+            out = self.layer1(x)
+            out = self.layer2(out)
+            out = self.last_layer[0](out)
+            return out
+
+    model = TestModel().to(torch.float16)
+
+    config = PeftTargetConfig(
+        config=LoRAConfig(
+            type="lora",
+            dtype="float16",
+            rank=4,
+            alpha=1.0,
+            dropout=0.0,
+            use_bias=False,
+        ),
+        include_keys=[".0", RegexMatch(regex=r".*\.child_\d+")],
+        exclude_keys=["layer2"],
+    )
+
+    inputs = torch.randn(1, 3, 10, 10, dtype=torch.float16)
+    original_output = model(inputs)
+
+    config.replace_to_peft_layer(model, freeze_base=True)
+
+    assert isinstance(model.layer1[0], LoRAConv2d)
+    assert model.layer1[0].lora_down.weight.T.shape == torch.Size([3, 3, 3, 4])
+    assert model.layer1[0].lora_up.weight.T.shape == torch.Size([1, 1, 4, 3])
+    assert isinstance(model.layer1[2], nn.Conv2d)
+    assert isinstance(model.layer2[0], nn.Conv2d)
+    assert isinstance(model.layer2[2], nn.Conv2d)
+    assert isinstance(model.child.child_1, LoRAConv2d)
+    assert model.child.child_1.lora_down.weight.T.shape == torch.Size([3, 3, 3, 4])
+    assert model.child.child_1.lora_up.weight.T.shape == torch.Size([1, 1, 4, 3])
+    assert isinstance(model.child.child_extra, nn.Conv2d)
+    assert isinstance(model.last_layer[0], LoRAConv2d)
+    assert model.last_layer[0].lora_down.weight.T.shape == torch.Size([3, 3, 3, 4])
+    assert model.last_layer[0].lora_up.weight.T.shape == torch.Size([1, 1, 4, 1])
 
     lora_output = model(inputs)
 

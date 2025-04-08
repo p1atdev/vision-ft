@@ -12,7 +12,7 @@ from .functional import (
     while_peft_disabled,
     while_peft_enabled,
 )
-from .lora import LoRALinear, LoRAConfig
+from .lora import LoRAConfig, LoRALinear, LoRAConv2d
 
 from ...utils.state_dict import RegexMatch
 

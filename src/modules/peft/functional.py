@@ -7,7 +7,7 @@ from torch import nn
 
 from .config import PeftConfigMixin, PEFT_TYPE
 from .util import PeftLayer
-from .lora import LoRALinear, LoRAConfig
+from .lora import LoRAConfig, LoRALinear, LoRAConv2d
 from ...utils.tensor import remove_orig_mod_prefix
 from ...utils.dtype import str_to_dtype
 from ...utils.state_dict import get_target_keys, RegexMatch
@@ -26,8 +26,27 @@ def _get_peft_linear(
         return LoRALinear(
             config=config,
             original_linear=module,
-            in_features=module.in_features,
-            out_features=module.out_features,
+            dropout=config.dropout,
+            dtype=dtype,
+        )
+
+    else:
+        raise ValueError(f"Unknown peft type: {config.type}")
+
+
+def _get_peft_conv2d(
+    module: nn.Conv2d,
+    config: PeftConfigMixin,
+    dtype: torch.dtype | None = None,
+) -> nn.Module:
+    if config.type == "none":
+        raise ValueError("peft type 'none' is not parameter efficient training")
+
+    if config.type == "lora":
+        config = LoRAConfig.model_validate(config.model_dump())
+        return LoRAConv2d(
+            config=config,
+            original_conv2d=module,
             dropout=config.dropout,
             dtype=dtype,
         )
@@ -55,6 +74,16 @@ def _replace_to_peft_layer(
 
             # replace with peft module
             peft_module = _get_peft_linear(
+                layer, config, dtype=str_to_dtype(config.dtype)
+            )
+            setattr(model, name, peft_module)
+
+        elif isinstance(layer, nn.Conv2d):
+            if full_name not in target_keys:
+                continue
+
+            # replace with peft module
+            peft_module = _get_peft_conv2d(
                 layer, config, dtype=str_to_dtype(config.dtype)
             )
             setattr(model, name, peft_module)
