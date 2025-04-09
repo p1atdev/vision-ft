@@ -1,0 +1,18 @@
+- prompt: |-
+    1girl, aqua eyes, baseball cap, blonde hair, closed mouth, earrings, 
+    green background, hat, hoop earrings, jewelry, looking at viewer, 
+    shirt, short hair, simple background, solo, upper body, yellow shirt, 
+    masterpiece, high score, great score, absurdres
+  negative_prompt: |-
+    lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, 
+    fewer digits, cropped, worst quality, low quality, low score, bad score, 
+    average score, signature, watermark, username, blurry
+  height: 1024
+  width: 1024
+  cfg_scale: 5.0
+  num_steps: 20
+
+  seed: 0
+
+  extra:
+    reference_image_path: /path/to/reference/image.jpg

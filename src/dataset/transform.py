@@ -1,4 +1,5 @@
 import math
+from typing import Sequence
 
 import torch
 import torchvision.transforms.v2 as transforms
@@ -52,3 +53,39 @@ class ObjectCoverResize(transforms.RandomCrop):
         )
 
         return img
+
+
+class PaddedResize:
+    """
+    Resize the image to the target size while keeping the aspect ratio.
+    """
+
+    def __init__(
+        self,
+        max_size: int,
+        interpolation: transforms.InterpolationMode
+        | int = transforms.InterpolationMode.BILINEAR,
+        antialias: bool | None = True,
+        fill: int | Sequence[int] = 0,
+    ) -> None:
+        self.interpolation = interpolation
+        self.max_size = max_size
+        self.antialias = antialias
+
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize(
+                    size=None,
+                    max_size=max_size,
+                    interpolation=interpolation,
+                    antialias=antialias,
+                ),
+                transforms.Pad(
+                    padding=max_size // 2, fill=fill, padding_mode="constant"
+                ),
+                transforms.CenterCrop(size=max_size),
+            ]
+        )
+
+    def __call__(self, img: torch.Tensor):
+        return self.transform(img)

@@ -4,6 +4,9 @@ from pydantic import BaseModel
 import torch
 from torch import nn
 
+from accelerate import init_empty_weights
+
+
 from ...utils.state_dict import RegexMatch
 
 
@@ -42,6 +45,15 @@ class AdapterManager(nn.Module, ABC):
         Applies the specified adapter to the model.
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
+
+    def load_adapter(self, model: nn.Module, state_dict: dict[str, torch.Tensor]):
+        with init_empty_weights():
+            self.model.apply_adapter(model)
+
+        # load state dict
+        # rename
+        state_dict = {k.replace(".", "!"): v for k, v in state_dict.items()}
+        self.module_dict.load_state_dict(state_dict, assign=True)
 
     def parameters(self):
         """
