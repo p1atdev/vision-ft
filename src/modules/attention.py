@@ -2,13 +2,23 @@ from typing import Literal
 import warnings
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
 
+try:
+    from flash_attn import flash_attn_func
 
-from flash_attn import flash_attn_func
-import xformers.ops as X
+    is_flash_attn_available = True
+except ImportError:
+    flash_attn_func = None
+    is_flash_attn_available = False
+
+try:
+    import xformers.ops as X
+
+    is_xformers_available = True
+except ImportError:
+    X = None
+    is_xformers_available = False
 
 AttentionImplementation = Literal[
     "eager",
@@ -59,6 +69,9 @@ def scaled_qkv_attention(
             v.to(attention_dtype),
         )
     if use_flash:
+        assert is_flash_attn_available and flash_attn_func is not None, (
+            "Flash Attention is not available."
+        )
         # flash requires (batch_size, seq_len, num_heads, head_dim)
         output = flash_attn_func(
             q.permute(0, 2, 1, 3),
@@ -116,6 +129,9 @@ def scaled_dot_product_attention(
         )
 
     if backend == "flash_attention_2":
+        assert is_flash_attn_available and flash_attn_func is not None, (
+            "Flash Attention is not available."
+        )
         if mask is not None:
             raise ValueError("Flash Attention does not support attention masks")
 
@@ -131,6 +147,7 @@ def scaled_dot_product_attention(
         return output.permute(0, 2, 1, 3)
 
     if backend == "xformers":
+        assert is_xformers_available and X is not None, "Xformers is not available."
         return X.memory_efficient_attention(
             q.permute(0, 2, 1, 3),
             k.permute(0, 2, 1, 3),
@@ -147,6 +164,7 @@ def get_attn_implementation_label(
 ) -> AttentionImplementation:
     # for transformers' models
     if use_flash_attention:
+        assert is_flash_attn_available, "Flash Attention is not available."
         return "flash_attention_2"
 
     return "sdpa"
