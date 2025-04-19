@@ -188,9 +188,10 @@ class Trainer:
             #             weight_path, self.peft_config.resume_rename_key_map
             #         ),
             #     )
-            print_trainable_parameters(self.model, self.print)
         else:
             self.model._set_is_peft(False)
+
+        print_trainable_parameters(self.model, self.print)
 
     def prepare_model(self):
         self.model.before_setup_model()
