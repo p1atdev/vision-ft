@@ -109,6 +109,22 @@ class ReferencingTextToImageBucket(TextToImageBucket):
 
         return batch
 
+    def _generate_ds_from_pairs(
+        self, pairs: list[ImageCaptionPairWithReference]
+    ) -> Iterator:
+        for pair in pairs:
+            image = str(pair.image)
+            reference_image = str(pair.reference_image)
+            caption = pair.read_caption()
+
+            yield {
+                "image": image,
+                "reference_image": reference_image,
+                "caption": caption,
+                "width": pair.width,
+                "height": pair.height,
+            }
+
 
 class ReferencingTextToImageDatasetConfig(TextToImageDatasetConfig):
     reference_folder: str
