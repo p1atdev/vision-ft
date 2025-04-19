@@ -23,15 +23,12 @@ dependencies = [
     "accelerate>=1.2.1",
     "torchao>=0.7.0",
     "optimum-quanto>=0.2.6",
-    "triton>=3.1.0",
     "imagesize>=1.4.1",
     "cheesechaser>=0.2.2",
     "huggingface-dl>=0.0.2",
     "polars>=1.23.0",
     "huggingface-hub>=0.29.1",
-    "liger-kernel>=0.5.4",
     "einops>=0.8.1",
-    "xformers>=0.0.29.post1",
     "timm>=1.0.15",
 ]
 
@@ -62,7 +59,10 @@ requires-dist = ["setuptools", "wheel"]
 
 [project.optional-dependencies]
 build = ["setuptools", "wheel"]
-compile = ["flash-attn", "schedulefree", "diffusers"]
+compile = ["schedulefree", "diffusers"]
+flash-attn = ["flash-attn"]
+triton = ["triton"]
+xformers = ["xformers"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
