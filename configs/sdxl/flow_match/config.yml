@@ -1,0 +1,111 @@
+model:
+  checkpoint_path: "./models/animagine-xl-4.0-opt.bnb_nf4.safetensors"
+  pretrained_model_name_or_path: cagliostrolab/animagine-xl-4.0
+
+  dtype: bfloat16
+
+  denoiser:
+    attn_implementation: "flash_attention_2"
+
+peft:
+  - config: # Linear
+      type: lora
+      rank: 16
+      alpha: 1.0
+      dropout: 0.0
+
+      dtype: bfloat16
+
+    include_keys:
+      # - "time_embed" # Input
+      # - "label_emb" # Input
+      - "attn1" # Transformer
+      - "attn2" # Transformer
+      - ".ff." # Transformer
+      # - "proj_in" # Transformer
+      # - "proj_out" # Transformer
+      # - "emb_layers" # ResBlock
+    exclude_keys: ["text_encoder", "vae"]
+
+  # - config: # Conv2d
+  #     type: lora
+  #     rank: 16
+  #     alpha: 1.0
+  #     dropout: 0.0
+
+  #     dtype: bfloat16
+
+  #   include_keys:
+  #     - "in_layers" # ResBlock
+  #     - "out_layers" # ResBlock
+  #   exclude_keys: ["text_encoder", "vae"]
+
+dataset:
+  folder: "data/sfw_10k/images"
+  num_repeats: 1
+  batch_size: 4
+
+  bucket_base_size: 1024
+  step: 128
+  min_size: 384
+  do_upscale: false
+
+  # caption_processors:
+  #   - type: shuffle
+  #     split_separator: ","
+  #   - type: prefix
+  #     prefix: "sks style, "
+
+optimizer:
+  name: "schedulefree.RAdamScheduleFree"
+  # name: "bitsandbytes.optim.AdamW8bit"
+  args:
+    lr: 0.001
+
+scheduler:
+  # name: "torch.optim.lr_scheduler.ConstantLR"
+  # args: {}
+
+tracker:
+  project_name: "sdxl-flowmatch-1"
+  loggers:
+    - wandb
+
+saving:
+  strategy:
+    per_epochs: 1
+    per_steps: null
+    save_last: true
+
+  callbacks:
+    - type: "safentensors" # or "hf_hub" to push to hub
+      name: "sdxl-lora"
+      save_dir: "./output/flowmatch-1"
+
+preview:
+  strategy:
+    per_epochs: 1
+    per_steps: 100
+
+  callbacks:
+    - type: "local"
+      save_dir: "./output/flowmatch-1/preview"
+
+  data:
+    # you should change the project dir
+    path: "./configs/sdxl/flow_match/preview.yml"
+
+seed: 42
+num_train_epochs: 100
+
+trainer:
+  # debug_mode: "1step"
+
+  gradient_checkpointing: true
+
+  torch_compile: true
+  torch_compile_args:
+    backend: "eager"
+    mode: default
+    fullgraph: false
+  fp32_matmul_precision: "high"
