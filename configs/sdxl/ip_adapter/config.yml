@@ -7,7 +7,7 @@ model:
   denoiser:
     attn_implementation: "flash_attention_2"
 
-  adapter:
+  adapter: # ip-adapter
     ip_scale: 1.0
     num_ip_tokens: 4
     image_size: 384
@@ -19,7 +19,7 @@ model:
       model_name: "hf_hub:timm/vit_base_patch16_siglip_384.v2_webli"
     feature_dim: 768
 
-peft: []
+peft:
 
 # ReferencingTextToImageDatasetConfig
 dataset:
@@ -29,7 +29,7 @@ dataset:
   background_color: 0 # 0 for black, 255 for white
 
   num_repeats: 4
-  batch_size: 2
+  batch_size: 1
 
   bucket_base_size: 1024
   step: 128
@@ -63,7 +63,7 @@ tracker:
 saving:
   strategy:
     per_epochs: 1
-    per_steps: null
+    per_steps: 1
     save_last: true
 
   callbacks:
@@ -87,7 +87,7 @@ seed: 42
 num_train_epochs: 10
 
 trainer:
-  # debug_mode: "1step"
+  debug_mode: "1step"
 
   gradient_checkpointing: true
   gradient_accumulation_steps: 1

@@ -1,7 +1,5 @@
 - prompt: |-
-    1girl, aqua eyes, baseball cap, blonde hair, closed mouth, earrings, 
-    green background, hat, hoop earrings, jewelry, looking at viewer, 
-    shirt, short hair, simple background, solo, upper body, yellow shirt, 
+    1girl, solo, upper body, looking at viewer, 
     masterpiece, high score, great score, absurdres
   negative_prompt: |-
     lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, 
@@ -15,4 +13,4 @@
   seed: 0
 
   extra:
-    reference_image_path: /path/to/reference/image.jpg
+    reference_image_path: ./assets/sample_01.jpg

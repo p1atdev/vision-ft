@@ -43,12 +43,6 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
     def setup_model(self):
         # setup SDXL
         self.model = SDXLModelWithIPAdapter.from_config(self.model_config)
-        # freeze base model
-        self.model.denoiser.eval()
-        self.model.text_encoder.eval()
-        self.model.text_encoder.requires_grad_(False)
-        self.model.vae.eval()
-        self.model.vae.requires_grad_(False)
 
     @property
     def raw_model(self) -> SDXLModelWithIPAdapter:
@@ -68,7 +62,7 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         )
         encoder_hidden_states = torch.randn(
             1,
-            77,  # max token len
+            77 + 4,  # max token len + ip adapter token
             self.model_config.denoiser.context_dim,  # 2048
             device=self.accelerator.device,
         )
@@ -87,6 +81,8 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         crop_coords_top_left = torch.tensor(
             [0, 0], device=self.accelerator.device
         ).unsqueeze(0)
+
+        print(self.raw_model)
 
         with self.accelerator.autocast():
             _noise_pred = self.model.denoiser(

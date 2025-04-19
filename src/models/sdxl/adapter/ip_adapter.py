@@ -187,20 +187,23 @@ class SDXLModelWithIPAdapter(SDXLModel):
     def __init__(self, config: SDXLModelWithIPAdapterConfig):
         super().__init__(config)
 
-        # 3. setup image encoder
+        # 1. freeze base model
+        self.freeze_base_model()
+
+        # 2. setup image encoder
         self.encoder = AutoImageEncoder(
             config=self.config.adapter.image_encoder,
         )
         self.encoder.eval()
         self.encoder.requires_grad_(False)
 
-        # 4. setup projector
-        # 2. setup adapter
+        # 3. setup adapter
         self.manager = IPAdapterManager(
             adapter_class=IPAdapterCrossAttentionSDXL,
             adapter_config=self.config.adapter,
         )
         self.manager.apply_adapter(self)
+        # 4. setup projector
         self.image_proj = SingleImageProjector(
             in_features=self.config.adapter.feature_dim,
             cross_attention_dim=self.config.denoiser.context_dim,  # 2048
@@ -219,6 +222,14 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
             ]
         )
+
+    def freeze_base_model(self):
+        self.denoiser.eval()
+        self.denoiser.requires_grad_(False)
+        self.text_encoder.eval()
+        self.text_encoder.requires_grad_(False)
+        self.vae.eval()
+        self.vae.requires_grad_(False)
 
     @classmethod
     def from_config(
