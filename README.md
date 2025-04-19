@@ -23,6 +23,8 @@ WIP
 ```bash
 uv sync --extra build
 uv sync --all-extras
+# uv sync --extra compile --extra flash-attn --extra xformers --extra triton
+# at least compile is required for training
 ```
 
 
