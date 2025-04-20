@@ -1,14 +1,13 @@
 - prompt: |-
     1girl, solo, upper body, looking at viewer, 
-    masterpiece, high score, great score, absurdres
+    masterpiece, extremely aesthetic, newest, very vibrant colors, <|style|>
   negative_prompt: |-
-    lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, 
-    fewer digits, cropped, worst quality, low quality, low score, bad score, 
-    average score, signature, watermark, username, blurry
-  height: 1024
+    worst quality, low quality, lowers, low details, bad quality, poorly drawn, 
+    bad anatomy, multiple views, bad hands, blurry, artist sign, weibo username
   width: 1024
-  cfg_scale: 5.0
-  num_steps: 20
+  height: 1536
+  cfg_scale: 7.5
+  num_steps: 25
 
   seed: 0
 

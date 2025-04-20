@@ -29,7 +29,7 @@ model:
 
 peft:
 
-# ReferencingTextToImageDatasetConfig
+# StyledTextToImageDatasetConfig
 dataset:
   folder: "data/styled_images_1k"
   metadata_parquet: "data/metadata_styled_images_1k.parquet"
@@ -66,7 +66,7 @@ tracker:
 saving:
   strategy:
     per_epochs: 1
-    per_steps: 1
+    per_steps: null
     save_last: true
 
   callbacks:
