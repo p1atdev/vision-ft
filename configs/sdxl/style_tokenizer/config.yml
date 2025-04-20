@@ -1,0 +1,103 @@
+model:
+  checkpoint_path: "./models/Illustrious-XL-v2.0.unet-fp8_e4m3fn.safetensors"
+  pretrained_model_name_or_path: stabilityai/stable-diffusion-xl-base-1.0
+
+  dtype: bfloat16
+
+  denoiser:
+    attn_implementation: "flash_attention_2"
+
+  adapter: # style_tokenizer
+    style_token: "<|style|>"
+    num_style_tokens: 8
+    image_size: 512
+    background_color: 0 # 0 for black, 255 for white
+
+    # vision encoder and projector weight
+    # checkpoint_weight: ""
+
+    # checkpoint_weight: null
+    image_encoder:
+      type: timm
+      model_name: "hf_hub:timm/vit_base_patch16_siglip_512.v2_webli"
+    feature_dim: 768
+
+  # training config
+  max_token_length: 225
+  freeze_vision_encoder: true
+  freeze_projector: false
+
+peft:
+
+# ReferencingTextToImageDatasetConfig
+dataset:
+  folder: "data/styled_images_1k"
+  metadata_parquet: "data/metadata_styled_images_1k.parquet"
+  style_image_size: 512
+  background_color: 0 # 0 for black, 255 for white
+
+  num_repeats: 4
+  batch_size: 1
+
+  bucket_base_size: 1024
+  step: 128
+  min_size: 384
+  do_upscale: false
+
+  caption_processors:
+    - type: suffix
+      suffix: ", <|style|>"
+
+optimizer:
+  name: "schedulefree.RAdamScheduleFree"
+  # name: "bitsandbytes.optim.AdamW8bit"
+  args:
+    lr: 0.001
+
+scheduler:
+  # name: "torch.optim.lr_scheduler.ConstantLR"
+  # args: {}
+
+tracker:
+  project_name: "sdxl-style-tokenizer-1"
+  loggers:
+    - wandb
+
+saving:
+  strategy:
+    per_epochs: 1
+    per_steps: 1
+    save_last: true
+
+  callbacks:
+    - type: "safentensors" # or "hf_hub" to push to hub
+      name: "sdxl-style-tokenizer"
+      save_dir: "./output/sdxl-style-tokenizer"
+
+preview:
+  strategy:
+    per_epochs: 1
+    per_steps: null
+
+  callbacks:
+    - type: "local"
+      save_dir: "./output/sdxl-style-tokenizer/preview"
+
+  data:
+    path: "./configs/sdxl/style_tokenizer/preview.yml"
+
+seed: 42
+num_train_epochs: 10
+
+trainer:
+  debug_mode: "1step"
+
+  gradient_checkpointing: true
+  gradient_accumulation_steps: 1
+
+  torch_compile: false
+  torch_compile_args:
+    backend: eager
+    mode: default
+    fullgraph: false
+  fp32_matmul_precision: "high"
