@@ -45,7 +45,7 @@ DEFAULT_TEXT_ENCODER_1_CONFIG = {
 DEFAULT_TEXT_ENCODER_1_CLASS = CLIPTextModel
 DEFAULT_TEXT_ENCODER_1_CONFIG_CLASS = CLIPTextConfig
 DEFAULT_TOKENIZER_1_FOLDER = "tokenizer"
-DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH = 77
+DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH = 75
 
 # Open CLIP
 # [laion/CLIP-ViT-bigG-14-laion2B-39B-b160k](https://huggingface.co/laion/CLIP-ViT-bigG-14-laion2B-39B-b160k)
@@ -74,7 +74,7 @@ DEFAULT_TEXT_ENCODER_2_CONFIG = {
 DEFAULT_TEXT_ENCODER_2_CLASS = CLIPTextModelWithProjection
 DEFAULT_TEXT_ENCODER_2_CONFIG_CLASS = CLIPTextConfig
 DEFAULT_TOKENIZER_2_FOLDER = "tokenizer_2"
-DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH = 77
+DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH = 75
 
 DEFAULT_TOKENIZER_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 
@@ -189,7 +189,7 @@ class TextEncoder(nn.Module):
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
         use_negative_prompts: bool = False,
-        max_token_length: int = DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH - 2,
+        max_token_length: int = DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH,
     ):
         # 1. Normalize prompts
         _prompts, _negative_prompts = self.normalize_prompts(
@@ -198,13 +198,14 @@ class TextEncoder(nn.Module):
             use_negative_prompts,
         )
         num_prompts = len(_prompts)
+        num_all_prompts = len(_prompts + _negative_prompts)
 
         # 2. Tokenize prompts
         input_ids, attention_mask = tokenize_long_prompt(
             tokenizer=self.tokenizer_1,
             prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
-            chunk_length=75,
+            chunk_length=DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH,
         )
 
         # 3. Encode prompts
@@ -213,20 +214,19 @@ class TextEncoder(nn.Module):
             output_hidden_states=True,  # to get penultimate layer
         ).hidden_states[-2]  # penultimate layer
 
-        if prompt_encodings.size(0) != len(_prompts + _negative_prompts):
-            # chunked long prompts: [batch_size * num_chunks, seq_len, hidden_size]
-            # convert to [batch_size, seq_len * num_chunks, hidden_size]
-            prompt_encodings = prompt_encodings.view(
-                len(_prompts + _negative_prompts),
-                -1,  # 77 * 3 = 231?
-                prompt_encodings.size(-1),
-            )
+        # chunked long prompts: [batch_size * num_chunks, seq_len, hidden_size]
+        # convert to [batch_size, seq_len * num_chunks, hidden_size]
+        prompt_encodings = prompt_encodings.view(
+            num_all_prompts,
+            -1,  # 77 * 3 = 231?
+            prompt_encodings.size(-1),
+        )
 
-            # 4. Get attention mask
-            attention_mask = attention_mask.view(
-                len(_prompts + _negative_prompts),
-                -1,
-            )
+        # 4. Get attention mask
+        attention_mask = attention_mask.view(
+            num_all_prompts,
+            -1,
+        )
 
         # 6. Split prompts and negative prompts
         positive_embeddings = prompt_encodings[:num_prompts]
@@ -247,7 +247,7 @@ class TextEncoder(nn.Module):
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
         use_negative_prompts: bool = False,
-        max_token_length: int = DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH - 2,
+        max_token_length: int = DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH,
     ):
         # 1. Normalize prompts
         _prompts, _negative_prompts = self.normalize_prompts(
@@ -262,7 +262,7 @@ class TextEncoder(nn.Module):
             tokenizer=self.tokenizer_2,
             prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
-            chunk_length=75,
+            chunk_length=DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH,
         )
 
         # 3. Encode prompts
@@ -305,7 +305,6 @@ class TextEncoder(nn.Module):
         )
 
     # MARK: encode_prompts
-    # TODO: support long prompts
     def encode_prompts(
         self,
         prompts: PromptType,

@@ -20,6 +20,7 @@ from ....modules.adapter.style_tokenizer import (
     StyleTokenizerManager,
     SingleImageProjector,
 )
+from ....modules.long_prompt import tokenize_long_prompt
 from ..pipeline import SDXLModel
 from ..config import SDXLConfig
 from ...auto import AutoImageEncoder
@@ -124,17 +125,17 @@ class TextEncoderWithStyle(TextEncoder):
             self.preprocess_style_token(negative_prompts),
             use_negative_prompts,
         )
-        prompts_len = len(_prompts)
+        num_prompts = len(_prompts)
+        num_all_prompts = num_prompts + len(_negative_prompts)
 
         # 2. Tokenize prompts
-        text_inputs: BatchEncoding = self.tokenizer_1(
-            _prompts + _negative_prompts,
-            return_tensors="pt",
+        input_ids, attention_mask = tokenize_long_prompt(
+            tokenizer=self.tokenizer_1,
+            prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
-            padding="max_length",
-            truncation=True,
+            chunk_length=DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH,
         )
-        input_ids: torch.Tensor = text_inputs.input_ids.to(self.text_encoder_1.device)
+        input_ids: torch.Tensor = input_ids.to(self.text_encoder_1.device)
 
         # 3.2 Get input embeddings
         if style_embeddings is not None:
@@ -163,23 +164,26 @@ class TextEncoderWithStyle(TextEncoder):
         )
 
         # 3. Encode prompts
-        prompt_encodings = self.text_encoder_1.text_model.encoder(
+        prompt_encodings: torch.Tensor = self.text_encoder_1.text_model.encoder(
             inputs_embeds=input_embed,
             causal_attention_mask=causal_attention_mask,
             output_hidden_states=True,  # to get penultimate layer
         ).hidden_states[-2]  # penultimate layer
 
+        # if the prompt is long, they will be split into multiple chunks
+        # so we need to concat the embeddings back
+        _batch_size_x_num_chunks, _seq_len, hidden_dim = prompt_encodings.size()
+        prompt_encodings = prompt_encodings.view(num_all_prompts, -1, hidden_dim)
+
         # 4. Get attention mask
-        attention_mask = text_inputs.attention_mask.unsqueeze(-1).expand(
-            prompt_encodings.shape
-        )
+        attention_mask = attention_mask.view(num_all_prompts, -1)
 
         # 6. Split prompts and negative prompts
-        positive_embeddings = prompt_encodings[:prompts_len]
-        negative_embeddings = prompt_encodings[prompts_len:]
+        positive_embeddings = prompt_encodings[:num_prompts]
+        negative_embeddings = prompt_encodings[num_prompts:]
 
-        positive_attention_mask = attention_mask[:prompts_len]
-        negative_attention_mask = attention_mask[prompts_len:]
+        positive_attention_mask = attention_mask[:num_prompts]
+        negative_attention_mask = attention_mask[num_prompts:]
 
         return TextEncodingOutput(
             positive_embeddings=positive_embeddings,
@@ -203,17 +207,17 @@ class TextEncoderWithStyle(TextEncoder):
             negative_prompts,
             use_negative_prompts,
         )
-        prompts_batch_size = len(_prompts)
+        num_prompts = len(_prompts)
+        num_all_prompts = num_prompts + len(_negative_prompts)
 
         # 2. Tokenize prompts
-        text_inputs: BatchEncoding = self.tokenizer_2(
-            _prompts + _negative_prompts,
-            return_tensors="pt",
+        input_ids, attention_mask = tokenize_long_prompt(
+            tokenizer=self.tokenizer_2,
+            prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
-            padding="max_length",
-            truncation=True,
+            chunk_length=DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH,
         )
-        input_ids: torch.Tensor = text_inputs.input_ids.to(self.text_encoder_1.device)
+        input_ids = input_ids.to(self.text_encoder_1.device)
 
         # 3.2 Get input embeddings
         if style_embeddings is not None:
@@ -229,6 +233,7 @@ class TextEncoderWithStyle(TextEncoder):
             )
         else:
             style_embeddings = None
+
         input_embed = self.encode_tokens_with_style_embed(
             module=self.text_encoder_2.text_model.embeddings,
             input_ids=input_ids,
@@ -247,7 +252,17 @@ class TextEncoderWithStyle(TextEncoder):
             causal_attention_mask=causal_attention_mask,
             output_hidden_states=True,  # to get penultimate layer
         )
-        encoder_hidden_state = outputs.hidden_states[-2]  # penultimate layer
+        encoder_hidden_state: torch.Tensor = outputs.hidden_states[
+            -2
+        ]  # penultimate layer
+
+        # if the prompt is long, they will be split into multiple chunks
+        # so we need to concat the embeddings back
+        _batch_size_x_num_chunks, _seq_len, hidden_dim = encoder_hidden_state.size()
+        encoder_hidden_state = encoder_hidden_state.view(
+            num_all_prompts, -1, hidden_dim
+        )
+
         last_hidden_state = self.text_encoder_2.text_model.final_layer_norm(
             outputs.last_hidden_state
         )
@@ -267,13 +282,17 @@ class TextEncoderWithStyle(TextEncoder):
                 .argmax(dim=-1),
             ]
         )
+        #  we only need the first chunk's pool
+        pooled_embeddings = pooled_embeddings.view(num_all_prompts, -1, hidden_dim)[
+            :, 0, :
+        ].squeeze(1)
 
         # 4. Split prompts and negative prompts
-        positive_embeddings = encoder_hidden_state[:prompts_batch_size]
-        negative_embeddings = encoder_hidden_state[prompts_batch_size:]
+        positive_embeddings = encoder_hidden_state[:num_prompts]
+        negative_embeddings = encoder_hidden_state[num_prompts:]
 
-        pooled_positive_embeddings = pooled_embeddings[:prompts_batch_size]
-        pooled_negative_embeddings = pooled_embeddings[prompts_batch_size:]
+        pooled_positive_embeddings = pooled_embeddings[:num_prompts]
+        pooled_negative_embeddings = pooled_embeddings[num_prompts:]
 
         return PooledTextEncodingOutput(
             positive_embeddings=positive_embeddings,
@@ -283,7 +302,6 @@ class TextEncoderWithStyle(TextEncoder):
         )
 
     # MARK: encode_prompts
-    # TODO: support long prompts
     def encode_prompts(
         self,
         prompts: PromptType,
@@ -293,8 +311,7 @@ class TextEncoderWithStyle(TextEncoder):
         negative_style_tokens_1: torch.Tensor | None = None,
         negative_style_tokens_2: torch.Tensor | None = None,
         use_negative_prompts: bool = False,
-        text_encoder_1_max_token_length: int = DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH,
-        text_encoder_2_max_token_length: int = DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH,
+        max_token_length: int = 75,
     ) -> MultipleTextEncodingOutput:
         output_1 = self.encode_prompts_text_encoder_1(
             prompts,
@@ -302,7 +319,7 @@ class TextEncoderWithStyle(TextEncoder):
             negative_prompts,
             negative_style_tokens_1,
             use_negative_prompts,
-            text_encoder_1_max_token_length,
+            max_token_length,
         )
         output_2 = self.encode_prompts_text_encoder_2(
             prompts,
@@ -310,7 +327,7 @@ class TextEncoderWithStyle(TextEncoder):
             negative_prompts,
             negative_style_tokens_2,
             use_negative_prompts,
-            text_encoder_2_max_token_length,
+            max_token_length,
         )
 
         return MultipleTextEncodingOutput(
@@ -470,6 +487,7 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
         crop_coords_top_left: tuple[int, int] = (0, 0),
         num_inference_steps: int = 20,
         cfg_scale: float = 3.5,
+        max_token_length: int = 75,
         seed: int | None = None,
         execution_dtype: torch.dtype = torch.bfloat16,
         device: torch.device | str = torch.device("cuda"),
@@ -519,6 +537,7 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
             negative_style_tokens_1=None,
             negative_style_tokens_2=None,
             use_negative_prompts=do_cfg,
+            max_token_length=max_token_length,
         )
         if do_offloading:
             self.text_encoder.to("cpu")
