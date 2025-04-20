@@ -18,6 +18,7 @@ from ..utils import PromptType, TextEncodingOutput, PooledTextEncodingOutput
 from ...utils.state_dict import (
     convert_open_clip_to_transformers,
 )
+from ...modules.long_prompt import tokenize_long_prompt
 
 # OpenAI CLIP
 # [openai/clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)
@@ -188,7 +189,7 @@ class TextEncoder(nn.Module):
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
         use_negative_prompts: bool = False,
-        max_token_length: int = DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH,
+        max_token_length: int = DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH - 2,
     ):
         # 1. Normalize prompts
         _prompts, _negative_prompts = self.normalize_prompts(
@@ -196,34 +197,43 @@ class TextEncoder(nn.Module):
             negative_prompts,
             use_negative_prompts,
         )
-        prompts_len = len(_prompts)
+        num_prompts = len(_prompts)
 
         # 2. Tokenize prompts
-        text_inputs: BatchEncoding = self.tokenizer_1(
-            _prompts + _negative_prompts,
-            return_tensors="pt",
+        input_ids, attention_mask = tokenize_long_prompt(
+            tokenizer=self.tokenizer_1,
+            prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
-            padding="max_length",
-            truncation=True,
+            chunk_length=75,
         )
 
         # 3. Encode prompts
-        prompt_encodings = self.text_encoder_1(
-            text_inputs.input_ids.to(self.text_encoder_1.device),
+        prompt_encodings: torch.Tensor = self.text_encoder_1(
+            input_ids.to(self.text_encoder_1.device),
             output_hidden_states=True,  # to get penultimate layer
         ).hidden_states[-2]  # penultimate layer
 
-        # 4. Get attention mask
-        attention_mask = text_inputs.attention_mask.unsqueeze(-1).expand(
-            prompt_encodings.shape
-        )
+        if prompt_encodings.size(0) != len(_prompts + _negative_prompts):
+            # chunked long prompts: [batch_size * num_chunks, seq_len, hidden_size]
+            # convert to [batch_size, seq_len * num_chunks, hidden_size]
+            prompt_encodings = prompt_encodings.view(
+                len(_prompts + _negative_prompts),
+                -1,  # 77 * 3 = 231?
+                prompt_encodings.size(-1),
+            )
+
+            # 4. Get attention mask
+            attention_mask = attention_mask.view(
+                len(_prompts + _negative_prompts),
+                -1,
+            )
 
         # 6. Split prompts and negative prompts
-        positive_embeddings = prompt_encodings[:prompts_len]
-        negative_embeddings = prompt_encodings[prompts_len:]
+        positive_embeddings = prompt_encodings[:num_prompts]
+        negative_embeddings = prompt_encodings[num_prompts:]
 
-        positive_attention_mask = attention_mask[:prompts_len]
-        negative_attention_mask = attention_mask[prompts_len:]
+        positive_attention_mask = attention_mask[:num_prompts]
+        negative_attention_mask = attention_mask[num_prompts:]
 
         return TextEncodingOutput(
             positive_embeddings=positive_embeddings,
@@ -237,7 +247,7 @@ class TextEncoder(nn.Module):
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
         use_negative_prompts: bool = False,
-        max_token_length: int = DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH,
+        max_token_length: int = DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH - 2,
     ):
         # 1. Normalize prompts
         _prompts, _negative_prompts = self.normalize_prompts(
@@ -248,23 +258,37 @@ class TextEncoder(nn.Module):
         prompts_batch_size = len(_prompts)
 
         # 2. Tokenize prompts
-        text_inputs = self.tokenizer_2(
-            _prompts + _negative_prompts,
-            return_tensors="pt",
+        input_ids, attention_mask = tokenize_long_prompt(
+            tokenizer=self.tokenizer_2,
+            prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
-            padding="max_length",
-            truncation=True,
+            chunk_length=75,
         )
 
         # 3. Encode prompts
         outputs = self.text_encoder_2(
-            text_inputs.input_ids.to(self.text_encoder_2.device),
+            input_ids.to(self.text_encoder_2.device),
             output_hidden_states=True,  # to get penultimate layer
         )
 
-        encoder_hidden_state = outputs.hidden_states[-2]  # penultimate layer
+        encoder_hidden_state: torch.Tensor = outputs.hidden_states[
+            -2
+        ]  # penultimate layer
+        encoder_hidden_state = encoder_hidden_state.view(
+            len(_prompts + _negative_prompts),
+            -1,  # 77 * 3 = 231?
+            encoder_hidden_state.size(-1),
+        )
         # https://github.com/huggingface/transformers/blob/0d6a60fe55fe051a1a68f2026d19223ed57b3c75/src/transformers/models/clip/modeling_clip.py#L1489
-        pooled_embeddings = outputs.text_embeds
+        pooled_embeddings = (
+            outputs.text_embeds
+        )  # [batch_size * num_chunks, hidden_size]
+        # we only take the first chunk
+        pooled_embeddings = pooled_embeddings.view(
+            len(_prompts + _negative_prompts),
+            -1,  # 3?
+            pooled_embeddings.size(-1),
+        )[:, 0, :].squeeze(1)  # [batch_size, hidden_size]
 
         # 4. Split prompts and negative prompts
         positive_embeddings = encoder_hidden_state[:prompts_batch_size]
@@ -287,20 +311,19 @@ class TextEncoder(nn.Module):
         prompts: PromptType,
         negative_prompts: PromptType | None = None,
         use_negative_prompts: bool = False,
-        text_encoder_1_max_token_length: int = DEFAULT_TEXT_ENCODER_1_MAX_TOKEN_LENGTH,
-        text_encoder_2_max_token_length: int = DEFAULT_TEXT_ENCODER_2_MAX_TOKEN_LENGTH,
+        max_token_length: int = 75,
     ) -> MultipleTextEncodingOutput:
         output_1 = self.encode_prompts_text_encoder_1(
             prompts,
             negative_prompts,
             use_negative_prompts,
-            text_encoder_1_max_token_length,
+            max_token_length,
         )
         output_2 = self.encode_prompts_text_encoder_2(
             prompts,
             negative_prompts,
             use_negative_prompts,
-            text_encoder_2_max_token_length,
+            max_token_length,
         )
 
         return MultipleTextEncodingOutput(

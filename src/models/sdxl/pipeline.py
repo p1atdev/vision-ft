@@ -288,6 +288,7 @@ class SDXLModel(nn.Module):
         crop_coords_top_left: tuple[int, int] = (0, 0),
         num_inference_steps: int = 20,
         cfg_scale: float = 3.5,
+        max_token_length: int = 75,
         seed: int | None = None,
         execution_dtype: torch.dtype = torch.bfloat16,
         device: torch.device | str = torch.device("cuda"),
@@ -316,6 +317,7 @@ class SDXLModel(nn.Module):
             prompt,
             negative_prompt,
             use_negative_prompts=do_cfg,
+            max_token_length=max_token_length,
         )
         if do_offloading:
             self.text_encoder.to("cpu")
