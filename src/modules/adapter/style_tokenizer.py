@@ -52,7 +52,6 @@ class SingleImageProjector(nn.Module):
 
 
 class StyleTokenizerConfig(BaseModel):
-    ip_scale: float = 1.0
     style_token: str = "<|style|>"
     num_style_tokens: int = 4
     image_size: int = 512
