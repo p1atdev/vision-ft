@@ -16,9 +16,16 @@ class AbstractAutoModelConfig(BaseModel, ABC):
     config: dict
 
     @abstractmethod
-    def get_model(self) -> nn.Module:
+    def setup_model(self) -> nn.Module:
         """
         Returns the model instance.
+        """
+        pass
+
+    @abstractmethod
+    def load_model(self) -> nn.Module:
+        """
+        Loads the model instance.
         """
         pass
 
@@ -29,16 +36,26 @@ class TransformersModelConfig(AbstractAutoModelConfig):
     config: dict = {}
     pretrained: bool = True
 
-    def get_model(self) -> nn.Module:
+    def setup_model(self) -> nn.Module:
         """
         Returns the pretrained model instance.
         """
-        if self.pretrained:
-            model = AutoModel.from_pretrained(self.model_name, **self.config)
-            return model
 
         config = AutoConfig.from_pretrained(self.model_name, **self.config)
         model = AutoModel.from_config(config)
+        return model
+
+    def load_model(self) -> nn.Module:
+        """
+        Loads the pretrained model instance.
+        """
+        if self.pretrained:
+            return AutoModel.from_pretrained(self.model_name, **self.config)
+
+        model = AutoModel.from_config(
+            AutoConfig.from_pretrained(self.model_name, **self.config)
+        )
+
         return model
 
 
@@ -48,18 +65,25 @@ class TimmModelConfig(AbstractAutoModelConfig):
     config: dict = {}
     pretrained: bool = True
 
-    def get_model(self) -> nn.Module:
+    def setup_model(self) -> nn.Module:
         """
         Returns the pretrained model instance.
         """
 
         self.config["num_classes"] = 0  # Remove the classification head
 
+        model = timm.create_model(self.model_name, pretrained=False, **self.config)
+        return model
+
+    def load_model(self) -> nn.Module:
+        """
+        Loads the pretrained model instance.
+        """
         if self.pretrained:
-            model = timm.create_model(self.model_name, pretrained=True, **self.config)
-            return model
+            return timm.create_model(self.model_name, pretrained=True, **self.config)
 
         model = timm.create_model(self.model_name, pretrained=False, **self.config)
+
         return model
 
 
@@ -74,13 +98,16 @@ class AutoImageEncoder(nn.Module):
         super().__init__()
 
         self.config = config
-        self.model = config.get_model()
+        self.model = config.setup_model()
+
+    def _load_model(self):
+        self.model = self.config.load_model()
 
     def encode(self, pixel_values: torch.Tensor, **kwargs) -> torch.Tensor:
-        if isinstance(self.model, TransformersModelConfig):
+        if isinstance(self.config, TransformersModelConfig):
             outputs = self.model(pixel_values, **kwargs)
             return outputs.pooler_output
-        elif isinstance(self.model, TimmModelConfig):
+        elif isinstance(self.config, TimmModelConfig):
             last_hidden_state = self.model.forward_features(pixel_values, **kwargs)
             pooler_output = self.model.forward_head(last_hidden_state)
             return pooler_output
