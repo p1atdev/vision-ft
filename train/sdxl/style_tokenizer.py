@@ -191,11 +191,11 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
     def preview_step(self, batch, preview_index: int) -> list[Image.Image]:
         prompt: str = batch["prompt"]
         negative_prompt: str | None = batch["negative_prompt"]
-        height: int = batch["height"]
-        width: int = batch["width"]
-        cfg_scale: float = batch["cfg_scale"]
-        num_steps: int = batch["num_steps"]
-        seed: int = batch["seed"]
+        height: int = batch.get("height", 1024)
+        width: int = batch.get("width", 1024)
+        cfg_scale: float = batch.get("cfg_scale", 5.0)
+        num_steps: int = batch.get("num_steps", 25)
+        seed: int = batch.get("seed", 0)
         extra: dict = batch["extra"]
         reference_image_path: str = extra["reference_image_path"]
 
@@ -215,6 +215,7 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
                 cfg_scale=cfg_scale,
                 num_inference_steps=num_steps,
                 seed=seed,
+                max_token_length=self.model_config.max_token_length,
             )[0]
 
         self.log(
