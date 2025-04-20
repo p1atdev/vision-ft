@@ -948,6 +948,21 @@ wheels = [
 ]
 
 [[package]]
+name = "hf-xet"
+version = "1.0.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/68/4c363b2e62cb3dbe12d2257ba9b22f101384692d4b9727c5f72433472cff/hf_xet-1.0.3.tar.gz", hash = "sha256:a6d16861a06dd4b8f7229c16b392c5fb8b9588ced89a6ee9bc3e66227f794353", size = 257227 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/12/ebbba4b64cb9c908bd5dee355da27f3cc5ad4f29b4b2835041d363388363/hf_xet-1.0.3-cp37-abi3-macosx_10_12_x86_64.whl", hash = "sha256:0705e5db0da5794ab048a8662a7b3aba220f963270b26abc92e8d05abca22451", size = 4979740 },
+    { url = "https://files.pythonhosted.org/packages/58/8f/34eadc408b834bcb55886b242a9783da3f63508c4bcbfda7a4f21e61f3d1/hf_xet-1.0.3-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:09a9565ca84049d48c99c83a82d08fbc21d63c04811fd2f7dd088292c1185bc5", size = 4806773 },
+    { url = "https://files.pythonhosted.org/packages/a1/de/00b2e2568a39c01b0e013db3300f4d5841f2e597d7b0518923c7881bd166/hf_xet-1.0.3-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:70e18534d46ab92bbc3125addaebc145f9b27e06eecd67b40c4342f4b92b677f", size = 53812632 },
+    { url = "https://files.pythonhosted.org/packages/e2/d8/4ff790370a6795418196553c33e7bcceaa73a7d587e21e4ccb7661b54a2a/hf_xet-1.0.3-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:da28fd32213ad5b8f60771aba44ac032ba19d752928cfd95914f09146b3f51ec", size = 52277180 },
+    { url = "https://files.pythonhosted.org/packages/83/dd/7b432918a3e9e09794674b81e852acc6e14177c0a4466ac0566b7e7f47a4/hf_xet-1.0.3-cp37-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:1b71118b8f7e9edf1ae56282388794f351163c7de5c22ea3737dffa9313f500e", size = 53309852 },
+    { url = "https://files.pythonhosted.org/packages/4d/a2/d7a5f452a3a8faaa82aeb3aceddab2e103c1b7028a00bbc4caebca5d79fe/hf_xet-1.0.3-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:5927d1986f87b7b80616eb6353a1402be1d72c46b6b0709b01ffc7623a159563", size = 53739471 },
+    { url = "https://files.pythonhosted.org/packages/82/81/966f800933043c0be989306f5224ef058543f7848f1e78d7ef3305bd069a/hf_xet-1.0.3-cp37-abi3-win_amd64.whl", hash = "sha256:014b5a40e62ad334f21513e5ba39b419117396031e9264dfc15dd598a1595029", size = 4123538 },
+]
+
+[[package]]
 name = "hfutils"
 version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1057,6 +1072,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/78/be/049689a7197630e75c4bb53021cb209a56617c9bf39b3a0950650d1f96e1/huggingface_hub-0.30.1.tar.gz", hash = "sha256:f379e8b8d0791295602538856638460ae3cf679c7f304201eb80fb98c771950e", size = 400784 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/e3/2232d0e726d4d6ea69643b9593d97d0e7e6ea69c2fe9ed5de34d476c1c47/huggingface_hub-0.30.1-py3-none-any.whl", hash = "sha256:0f6aa5ec5a4e68e5b9e45d556b4e5ea180c58f5a5ffa734e7f38c9d573028959", size = 481170 },
+]
+
+[package.optional-dependencies]
+hf-xet = [
+    { name = "hf-xet" },
 ]
 
 [[package]]
@@ -1510,21 +1530,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/32/d8/014b89fee5d4dce157d814303b0fce4d31385a2af4c41fed194b173b81ac/kiwisolver-1.4.8-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:085940635c62697391baafaaeabdf3dd7a6c3643577dde337f4d66eba021b2b8", size = 2338410 },
     { url = "https://files.pythonhosted.org/packages/bd/72/dfff0cc97f2a0776e1c9eb5bef1ddfd45f46246c6533b0191887a427bca5/kiwisolver-1.4.8-cp312-cp312-win_amd64.whl", hash = "sha256:01c3d31902c7db5fb6182832713d3b4122ad9317c2c5877d0539227d96bb2e50", size = 71853 },
     { url = "https://files.pythonhosted.org/packages/dc/85/220d13d914485c0948a00f0b9eb419efaf6da81b7d72e88ce2391f7aed8d/kiwisolver-1.4.8-cp312-cp312-win_arm64.whl", hash = "sha256:a3c44cb68861de93f0c4a8175fbaa691f0aa22550c331fefef02b618a9dcb476", size = 65424 },
-]
-
-[[package]]
-name = "liger-kernel"
-version = "0.5.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "torch", version = "2.5.1", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.5.1+cu124", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "triton" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/ca/75bfd08e935de343e4191ec374f7915cab0630f09d74f086bb0223916cb5/liger_kernel-0.5.6.tar.gz", hash = "sha256:be983852a0322a5df75ce2a7e9bd6a79d84fe440621082c0603a65f9ec03b788", size = 3586281 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/45/3d1374bd8b5c4a058d00121ba114a192187dbd3003ef0d6e5da85d77b3a5/liger_kernel-0.5.6-py3-none-any.whl", hash = "sha256:7a1a952460622a5064e73f15e86822982aa20b05b30e4329a448491e5161c17d", size = 142529 },
 ]
 
 [[package]]
@@ -3592,10 +3597,10 @@ dependencies = [
     { name = "datasets" },
     { name = "einops" },
     { name = "hf-transfer" },
+    { name = "hf-xet" },
     { name = "huggingface-dl" },
-    { name = "huggingface-hub" },
+    { name = "huggingface-hub", extra = ["hf-xet"] },
     { name = "imagesize" },
-    { name = "liger-kernel" },
     { name = "lightning" },
     { name = "optimum-quanto" },
     { name = "polars" },
@@ -3614,10 +3619,8 @@ dependencies = [
     { name = "torchvision", version = "0.20.1+cu124", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
     { name = "tqdm" },
     { name = "transformers" },
-    { name = "triton" },
     { name = "wandb" },
     { name = "webdataset" },
-    { name = "xformers" },
 ]
 
 [package.optional-dependencies]
@@ -3627,8 +3630,16 @@ build = [
 ]
 compile = [
     { name = "diffusers" },
-    { name = "flash-attn" },
     { name = "schedulefree" },
+]
+flash-attn = [
+    { name = "flash-attn" },
+]
+triton = [
+    { name = "triton" },
+]
+xformers = [
+    { name = "xformers" },
 ]
 
 [package.dev-dependencies]
@@ -3655,12 +3666,12 @@ requires-dist = [
     { name = "datasets", specifier = ">=3.2.0" },
     { name = "diffusers", marker = "extra == 'compile'", git = "https://github.com/huggingface/diffusers" },
     { name = "einops", specifier = ">=0.8.1" },
-    { name = "flash-attn", marker = "extra == 'compile'" },
+    { name = "flash-attn", marker = "extra == 'flash-attn'" },
     { name = "hf-transfer", specifier = ">=0.1.8" },
+    { name = "hf-xet", specifier = ">=1.0.3" },
     { name = "huggingface-dl", git = "https://github.com/p1atdev/huggingface_dl" },
-    { name = "huggingface-hub", specifier = ">=0.29.1" },
+    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.29.1" },
     { name = "imagesize", specifier = ">=1.4.1" },
-    { name = "liger-kernel", specifier = ">=0.5.4" },
     { name = "lightning", specifier = ">=2.5.0.post0" },
     { name = "optimum-quanto", specifier = ">=0.2.6" },
     { name = "polars", specifier = ">=1.23.0" },
@@ -3679,13 +3690,13 @@ requires-dist = [
     { name = "torchvision", marker = "sys_platform == 'darwin'", specifier = ">=0.20" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=4.47.1" },
-    { name = "triton", specifier = ">=3.1.0" },
+    { name = "triton", marker = "extra == 'triton'" },
     { name = "wandb", specifier = ">=0.19.1" },
     { name = "webdataset", specifier = ">=0.2.100" },
     { name = "wheel", marker = "extra == 'build'" },
-    { name = "xformers", specifier = ">=0.0.29.post1" },
+    { name = "xformers", marker = "extra == 'xformers'" },
 ]
-provides-extras = ["build", "compile"]
+provides-extras = ["build", "compile", "flash-attn", "triton", "xformers"]
 
 [package.metadata.requires-dev]
 dev = [

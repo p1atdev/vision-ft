@@ -27,9 +27,10 @@ dependencies = [
     "cheesechaser>=0.2.2",
     "huggingface-dl>=0.0.2",
     "polars>=1.23.0",
-    "huggingface-hub>=0.29.1",
+    "huggingface-hub[hf-xet]>=0.29.1",
     "einops>=0.8.1",
     "timm>=1.0.15",
+    "hf-xet>=1.0.3",
 ]
 
 [tool.uv]
