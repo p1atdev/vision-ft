@@ -31,6 +31,9 @@ class SDXLModel(nn.Module):
 
         self.config = config
 
+        self._setup_models(config)
+
+    def _setup_models(self, config):
         self.denoiser = self.denoiser_class(config.denoiser)
         self.vae = VAE.from_default()
         self.text_encoder = TextEncoder.from_default()

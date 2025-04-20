@@ -1,4 +1,4 @@
-from typing import Any, Mapping, NamedTuple
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
@@ -11,12 +11,12 @@ from transformers import (
     CLIPTextModelWithProjection,
     CLIPTextConfig,
     BatchEncoding,
+    CLIPTokenizer,
 )
 from ...modules.attention import AttentionImplementation
 from ..utils import PromptType, TextEncodingOutput, PooledTextEncodingOutput
 from ...utils.state_dict import (
     convert_open_clip_to_transformers,
-    convert_transformers_to_open_clip,
 )
 
 # OpenAI CLIP
@@ -84,18 +84,18 @@ class MultipleTextEncodingOutput(NamedTuple):
 
 
 class TextEncoder(nn.Module):
-    text_encoder_1: PreTrainedModel
-    tokenizer_1: PreTrainedTokenizerBase
+    text_encoder_1: CLIPTextModel
+    tokenizer_1: CLIPTokenizer
 
-    text_encoder_2: PreTrainedModel
-    tokenizer_2: PreTrainedTokenizerBase
+    text_encoder_2: CLIPTextModelWithProjection
+    tokenizer_2: CLIPTokenizer
 
     def __init__(
         self,
-        text_encoder_1: PreTrainedModel,
-        tokenizer_1: PreTrainedTokenizerBase,
-        text_encoder_2: PreTrainedModel,
-        tokenizer_2: PreTrainedTokenizerBase,
+        text_encoder_1: CLIPTextModel,
+        tokenizer_1: CLIPTokenizer,
+        text_encoder_2: CLIPTextModelWithProjection,
+        tokenizer_2: CLIPTokenizer,
     ):
         super().__init__()
 
@@ -114,7 +114,7 @@ class TextEncoder(nn.Module):
             attn_implementation=attn_implementation,
         )
         text_encoder_1 = DEFAULT_TEXT_ENCODER_1_CLASS(config_1)
-        tokenizer_1 = AutoTokenizer.from_pretrained(
+        tokenizer_1 = CLIPTokenizer.from_pretrained(
             DEFAULT_TOKENIZER_REPO,
             subfolder=DEFAULT_TOKENIZER_1_FOLDER,
         )
@@ -124,7 +124,7 @@ class TextEncoder(nn.Module):
             attn_implementation=attn_implementation,
         )
         text_encoder_2 = DEFAULT_TEXT_ENCODER_2_CLASS(config_2)
-        tokenizer_2 = AutoTokenizer.from_pretrained(
+        tokenizer_2 = CLIPTokenizer.from_pretrained(
             DEFAULT_TOKENIZER_REPO,
             subfolder=DEFAULT_TOKENIZER_2_FOLDER,
         )
@@ -217,9 +217,6 @@ class TextEncoder(nn.Module):
         attention_mask = text_inputs.attention_mask.unsqueeze(-1).expand(
             prompt_encodings.shape
         )
-
-        # # 5. Mask out negative prompts
-        # prompt_encodings = prompt_encodings * attention_mask
 
         # 6. Split prompts and negative prompts
         positive_embeddings = prompt_encodings[:prompts_len]
