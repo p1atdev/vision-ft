@@ -11,3 +11,12 @@ class CaptionPrefix(CaptionProcessorMixin):
 
     def process(self, caption: str) -> str:
         return self.prefix + caption
+
+
+class CaptionSuffix(CaptionProcessorMixin):
+    type: Literal["suffix"] = "suffix"
+
+    suffix: str
+
+    def process(self, caption: str) -> str:
+        return self.suffix + caption
