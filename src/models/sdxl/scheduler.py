@@ -17,11 +17,10 @@ class Scheduler:
         # creates integer timesteps by multiplying by ratio
         # casting to int to avoid issues when num_inference_step is power of 3
         timesteps = (
-            (np.arange(0, num_inference_steps) * step_ratio)
-            .round()[::-1]
-            .copy()
+            np.arange(self.num_train_timesteps, 0, -step_ratio)
+            .round()
             .astype(np.float32)
-        )
+        ) - 1
         timesteps += self.steps_offset
 
         return timesteps
@@ -38,7 +37,7 @@ class Scheduler:
         )
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
-        sigmas = ((1 - alphas_cumprod) / alphas_cumprod) ** 0.5
+        sigmas = np.sqrt((1 - alphas_cumprod) / alphas_cumprod)
         sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
         sigmas = np.concat([sigmas, [0]]).astype(np.float32)
 
@@ -56,3 +55,32 @@ class Scheduler:
         sample = sample / ((current_sigma.pow(2) + 1).sqrt())
 
         return sample
+
+    def ancestral_step(
+        self,
+        latent: torch.Tensor,
+        noise_pred: torch.Tensor,
+        sigma: torch.Tensor,
+        next_sigma: torch.Tensor,
+    ) -> torch.Tensor:
+        # simplified up/down noise splits
+        sigma_up = torch.sqrt(next_sigma**2 * (sigma**2 - next_sigma**2) / sigma**2)
+        sigma_down = torch.sqrt(next_sigma**2 - sigma_up**2)
+
+        # time-step change
+        dt = sigma_down - sigma
+
+        # apply deterministic and stochastic updates
+        noise = torch.randn_like(latent)
+        prev_sample = latent + noise_pred * dt + noise * sigma_up
+
+        return prev_sample
+
+    def step(
+        self,
+        latent: torch.Tensor,
+        noise_pred: torch.Tensor,
+        sigma: torch.Tensor,
+        next_sigma: torch.Tensor,
+    ) -> torch.Tensor:
+        return latent + noise_pred * (next_sigma - sigma)

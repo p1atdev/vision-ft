@@ -383,7 +383,18 @@ class SDXLModel(nn.Module):
                     )
 
                 # denoise the latents
-                latents = latents + noise_pred * (next_sigma - current_sigma)
+                # latents = self.scheduler.step(
+                #     latents,
+                #     noise_pred,
+                #     current_sigma,
+                #     next_sigma,
+                # )
+                latents = self.scheduler.ancestral_step(
+                    latents,
+                    noise_pred,
+                    current_sigma,
+                    next_sigma,
+                )
 
                 progress_bar.update()
 
