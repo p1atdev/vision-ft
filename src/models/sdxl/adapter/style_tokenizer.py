@@ -375,7 +375,10 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
                     fill=self.config.adapter.background_color,
                 ),
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
-                v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
+                v2.Normalize(
+                    mean=self.config.adapter.image_mean,
+                    std=self.config.adapter.image_std,
+                ),  # 0~1 -> -1~1
             ]
         )
 

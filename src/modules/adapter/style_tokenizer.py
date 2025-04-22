@@ -106,6 +106,8 @@ class StyleTokenizerConfig(BaseModel):
         model_name="hf_hub:timm/vit_base_patch16_siglip_512.v2_webli",
         pretrained=True,
     )
+    image_mean: list[float] = [0.5, 0.5, 0.5]
+    image_std: list[float] = [0.5, 0.5, 0.5]
     feature_dim: int = 768
 
 
