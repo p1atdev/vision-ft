@@ -119,17 +119,17 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
                 max_timesteps=1000,  # change this for addift?
             )
 
-            # ip adapter inputs
-            ip_tokens = self.model.encode_reference_image(reference_pixel_values)
+        # ip adapter inputs
+        ip_tokens = self.model.encode_reference_image(reference_pixel_values)
 
-            # cat with seq len to pass through the model
-            encoder_hidden_states = torch.cat(
-                [
-                    encoder_hidden_states,
-                    ip_tokens,
-                ],
-                dim=1,  # seq len
-            )
+        # cat with seq len to pass through the model
+        encoder_hidden_states = torch.cat(
+            [
+                encoder_hidden_states,
+                ip_tokens,
+            ],
+            dim=1,  # seq len
+        )
 
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(
