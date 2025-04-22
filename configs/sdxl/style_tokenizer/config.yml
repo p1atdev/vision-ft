@@ -13,10 +13,11 @@ model:
     image_size: 512
     background_color: 0 # 0 for black, 255 for white
 
+    projector_type: "mlp"
+
     # vision encoder and projector weight
     # checkpoint_weight: ""
 
-    # checkpoint_weight: null
     image_encoder:
       type: timm
       model_name: "hf_hub:timm/vit_base_patch16_siglip_512.v2_webli"
@@ -52,7 +53,7 @@ optimizer:
   name: "schedulefree.RAdamScheduleFree"
   # name: "bitsandbytes.optim.AdamW8bit"
   args:
-    lr: 0.001
+    lr: 0.0001
 
 scheduler:
   # name: "torch.optim.lr_scheduler.ConstantLR"
@@ -93,7 +94,10 @@ trainer:
   debug_mode: "1step"
 
   gradient_checkpointing: true
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 16
+
+  clip_grad_norm: 1.0
+  # clip_grad_value: 1.0
 
   torch_compile: false
   torch_compile_args:
