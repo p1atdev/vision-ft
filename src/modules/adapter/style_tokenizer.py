@@ -69,7 +69,6 @@ class MLPImageProjector(nn.Module):
             nn.SiLU(),
             nn.Linear(in_features, out_features * num_style_tokens),
         )
-        # self.norm = nn.LayerNorm(out_features)
 
     def init_weights(self):
         nn.init.xavier_normal_(self.mlp[0].weight)
@@ -79,16 +78,12 @@ class MLPImageProjector(nn.Module):
         if self.mlp[2].bias is not None:
             nn.init.zeros_(self.mlp[2].bias)
 
-        # nn.init.ones_(self.norm.weight)
-        # nn.init.zeros_(self.norm.bias)
-
     def forward(self, features: torch.Tensor):
         style_tokens = self.mlp(features).reshape(
             -1,
             self.num_style_tokens,
             self.out_features,
         )
-        # style_tokens = self.norm(style_tokens)
 
         return style_tokens.reshape(
             -1,
