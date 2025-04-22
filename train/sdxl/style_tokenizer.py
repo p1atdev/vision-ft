@@ -82,7 +82,7 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
         )
         encoder_hidden_states = torch.randn(
             1,
-            77,  # max token len
+            self.model_config.max_token_length,  # max token len
             self.model_config.denoiser.context_dim,  # 2048
             device=self.accelerator.device,
         )
@@ -122,7 +122,7 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
         target_size = batch["target_size"]
         crop_coords_top_left = batch["crop_coords_top_left"]
 
-        reference_pixel_values = batch["reference_image"]  # ip adapter input
+        reference_pixel_values = batch["reference_image"]  # style image input
 
         # 1. Encode refefrence images
         style_tokens_1, style_tokens_2 = self.model.encode_reference_image(
@@ -136,17 +136,16 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
             style_tokens_2=style_tokens_2,
             max_token_length=self.model_config.max_token_length,
         )
+        encoder_hidden_states, pooled_hidden_states = (
+            self.model.prepare_encoder_hidden_states(
+                encoder_output=encoder_output,
+                do_cfg=False,
+                device=self.accelerator.device,
+            )
+        )
 
         # 3. Prepare other inputs
         with torch.no_grad():
-            encoder_hidden_states, pooled_hidden_states = (
-                self.model.prepare_encoder_hidden_states(
-                    encoder_output=encoder_output,
-                    do_cfg=False,
-                    device=self.accelerator.device,
-                )
-            )
-
             latents = self.model.encode_image(pixel_values)
             timesteps = uniform_randint(
                 latents_shape=latents.shape,
@@ -155,11 +154,11 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
                 max_timesteps=1000,  # change this for addift?
             )
 
-            # repare the noised latents
-            noisy_latents, random_noise = prepare_noised_latents(
-                latents=latents,
-                timestep=timesteps,
-            )
+        # repare the noised latents
+        noisy_latents, random_noise = prepare_noised_latents(
+            latents=latents,
+            timestep=timesteps,
+        )
 
         # 4. Predict the noise
         noise_pred = self.model(

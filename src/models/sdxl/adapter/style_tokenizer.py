@@ -18,7 +18,6 @@ from safetensors.torch import load_file
 from ....modules.adapter.style_tokenizer import (
     StyleTokenizerConfig,
     StyleTokenizerManager,
-    SingleImageProjector,
 )
 from ....modules.long_prompt import tokenize_long_prompt
 from ..pipeline import SDXLModel
@@ -360,15 +359,11 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
         self.vision_encoder = AutoImageEncoder(
             config=self.config.adapter.image_encoder,
         )
-        self.projector_1 = SingleImageProjector(
-            in_features=self.config.adapter.feature_dim,
+        self.projector_1 = self.manager.get_projector(
             out_features=self.text_encoder.text_encoder_1.config.hidden_size,  # 2048
-            num_style_tokens=self.config.adapter.num_style_tokens,
         )
-        self.projector_2 = SingleImageProjector(
-            in_features=self.config.adapter.feature_dim,
+        self.projector_2 = self.manager.get_projector(
             out_features=self.text_encoder.text_encoder_2.config.hidden_size,  # 2048
-            num_style_tokens=self.config.adapter.num_style_tokens,
         )
 
         # 4. preprocessor
@@ -412,18 +407,26 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
             state_dict = load_file(checkpoint_path)
 
             self.projector_1.load_state_dict(
-                {k: v for k, v in state_dict.items() if k.startswith("projector_1.")},
+                {
+                    k[len("projector_1.") :]: v
+                    for k, v in state_dict.items()
+                    if k.startswith("projector_1.")
+                },
                 strict=strict,
                 assign=True,
             )
             self.projector_2.load_state_dict(
-                {k: v for k, v in state_dict.items() if k.startswith("projector_2.")},
+                {
+                    k[len("projector_2.") :]: v
+                    for k, v in state_dict.items()
+                    if k.startswith("projector_2.")
+                },
                 strict=strict,
                 assign=True,
             )
             self.vision_encoder.load_state_dict(
                 {
-                    k: v
+                    k[len("vision_encoder.") :]: v
                     for k, v in state_dict.items()
                     if k.startswith("vision_encoder.")
                 },
@@ -604,7 +607,12 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
                     )
 
                 # denoise the latents
-                latents = latents + noise_pred * (next_sigma - current_sigma)
+                latents = self.scheduler.ancestral_step(
+                    latents,
+                    noise_pred,
+                    current_sigma,
+                    next_sigma,
+                )
 
                 progress_bar.update()
 
