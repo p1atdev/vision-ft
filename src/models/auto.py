@@ -70,9 +70,9 @@ class TimmModelConfig(AbstractAutoModelConfig):
         Returns the pretrained model instance.
         """
 
-        self.config["num_classes"] = 0  # Remove the classification head
-
         model = timm.create_model(self.model_name, pretrained=False, **self.config)
+        model.reset_classifier(0)  # remove classifier head
+
         return model
 
     def load_model(self) -> nn.Module:
@@ -80,9 +80,11 @@ class TimmModelConfig(AbstractAutoModelConfig):
         Loads the pretrained model instance.
         """
         if self.pretrained:
-            return timm.create_model(self.model_name, pretrained=True, **self.config)
+            model = timm.create_model(self.model_name, pretrained=True, **self.config)
+        else:
+            model = timm.create_model(self.model_name, pretrained=False, **self.config)
 
-        model = timm.create_model(self.model_name, pretrained=False, **self.config)
+        model.reset_classifier(0)  # remove classifier head
 
         return model
 
