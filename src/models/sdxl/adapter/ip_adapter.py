@@ -68,12 +68,6 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             bias=False,
         )
 
-        self._init_ip_weights()
-
-    def _init_ip_weights(self):
-        self.to_k_ip.weight.data.zero_()  # zero?
-        self.to_v_ip.weight.data.zero_()
-
     def freeze_original_modules(self):
         # freeze q, k, v, out
         self.to_q.eval()

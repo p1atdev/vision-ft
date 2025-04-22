@@ -45,13 +45,52 @@ class LinearImageProjector(nn.Module):
             self.num_ip_tokens,
             self.cross_attention_dim,
         )
-        ip_tokens = self.norm(ip_tokens)
-
-        return ip_tokens.reshape(
+        ip_tokens = self.norm(ip_tokens).reshape(
             -1,
             self.num_ip_tokens,
             self.cross_attention_dim,
         )
+
+        return ip_tokens
+
+
+class MLPImageProjector(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        cross_attention_dim: int = 768,
+        num_style_tokens: int = 4,
+    ):
+        super().__init__()
+
+        self.in_features = in_features
+        self.cross_attention_dim = cross_attention_dim
+        self.num_style_tokens = num_style_tokens
+
+        self.mlp = nn.Sequential(
+            nn.Linear(in_features, in_features),
+            nn.SiLU(),
+            nn.Linear(in_features, cross_attention_dim * num_style_tokens),
+        )
+        self.norm = nn.LayerNorm(cross_attention_dim)
+
+    def init_weights(self):
+        nn.init.xavier_normal_(self.mlp[0].weight)
+        if self.mlp[0].bias is not None:
+            nn.init.zeros_(self.mlp[0].bias)
+        nn.init.zeros_(self.mlp[2].weight)
+        if self.mlp[2].bias is not None:
+            nn.init.zeros_(self.mlp[2].bias)
+
+    def forward(self, features: torch.Tensor):
+        style_tokens = self.mlp(features)
+        style_tokens = self.norm(style_tokens).reshape(
+            -1,
+            self.num_style_tokens,
+            self.cross_attention_dim,
+        )
+
+        return style_tokens
 
 
 class IPAdapterConfig(BaseModel):
@@ -164,7 +203,7 @@ class IPAdapterManager(AdapterManager):
         for name, module in self.module_dict.named_modules():
             if isinstance(module, nn.Linear):
                 # initialize linear layers
-                nn.init.xavier_uniform_(module.weight)
+                nn.init.zeros_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.LayerNorm):
