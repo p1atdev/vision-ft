@@ -300,7 +300,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
 
         if isinstance(reference_image, list):
             reference_image = torch.stack(
-                [self.preprocessor(image).unsqueeze(0) for image in reference_image]
+                [self.preprocessor(image) for image in reference_image]
             )
 
         return reference_image
@@ -380,8 +380,8 @@ class SDXLModelWithIPAdapter(SDXLModel):
             reference_image = self.preprocess_reference_image(reference_image).to(
                 execution_device
             )
-            positive_reference_embeddings = self.image_proj(reference_image)
-            negative_reference_embeddings = self.image_proj(
+            positive_reference_embeddings = self.encode_reference_image(reference_image)
+            negative_reference_embeddings = self.encode_reference_image(
                 torch.zeros_like(reference_image)
             )
             reference_embeddings = torch.cat(

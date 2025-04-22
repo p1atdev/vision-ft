@@ -31,7 +31,7 @@ class LinearImageProjector(nn.Module):
 
     def init_weights(self):
         # initialize linear layers
-        nn.init.xavier_uniform_(self.proj.weight)
+        nn.init.zeros_(self.proj.weight)
         if self.proj.bias is not None:
             nn.init.zeros_(self.proj.bias)
 
@@ -47,7 +47,11 @@ class LinearImageProjector(nn.Module):
         )
         ip_tokens = self.norm(ip_tokens)
 
-        return ip_tokens
+        return ip_tokens.reshape(
+            -1,
+            self.num_ip_tokens,
+            self.cross_attention_dim,
+        )
 
 
 class IPAdapterConfig(BaseModel):
