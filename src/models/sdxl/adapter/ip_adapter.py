@@ -327,6 +327,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
         crop_coords_top_left: tuple[int, int] = (0, 0),
         num_inference_steps: int = 20,
         cfg_scale: float = 3.5,
+        max_token_length: int = 75,
         seed: int | None = None,
         execution_dtype: torch.dtype = torch.bfloat16,
         device: torch.device | str = torch.device("cuda"),
@@ -355,6 +356,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
             prompt,
             negative_prompt,
             use_negative_prompts=do_cfg,
+            max_token_length=max_token_length,
         )
         if do_offloading:
             self.text_encoder.to("cpu")
@@ -444,7 +446,12 @@ class SDXLModelWithIPAdapter(SDXLModel):
                     )
 
                 # denoise the latents
-                latents = latents + noise_pred * (next_sigma - current_sigma)
+                latents = self.scheduler.ancestral_step(
+                    latents,
+                    noise_pred,
+                    current_sigma,
+                    next_sigma,
+                )
 
                 progress_bar.update()
 

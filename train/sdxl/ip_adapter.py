@@ -26,11 +26,17 @@ from src.utils.tensor import remove_orig_mod_prefix
 from src.utils.logging import wandb_image
 
 
+class SDXLModelWithIPAdapterTrainingConfig(SDXLModelWithIPAdapterConfig):
+    max_token_length: int = 225  # 75 * 3
+
+    freeze_vision_encoder: bool = True
+
+
 class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
     model: SDXLModelWithIPAdapter
 
-    model_config: SDXLModelWithIPAdapterConfig
-    model_config_class = SDXLModelWithIPAdapterConfig
+    model_config: SDXLModelWithIPAdapterTrainingConfig
+    model_config_class = SDXLModelWithIPAdapterTrainingConfig
 
     def setup_model(self):
         # setup SDXL
@@ -39,6 +45,15 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
 
         # make adapter trainable
         self.model.manager.set_adapter_trainable(True)
+
+        if self.model_config.freeze_vision_encoder:
+            # freeze vision encoder
+            self.model.encoder.eval()
+            self.model.encoder.requires_grad_(False)
+        else:
+            # make vision encoder trainable
+            self.model.encoder.train()
+            self.model.encoder.requires_grad_(True)
 
     @property
     def raw_model(self) -> SDXLModelWithIPAdapter:
@@ -58,7 +73,7 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         )
         encoder_hidden_states = torch.randn(
             1,
-            77 + 4,  # max token len + ip adapter token
+            self.model_config.max_token_length + 4,  # max token len + ip adapter token
             self.model_config.denoiser.context_dim,  # 2048
             device=self.accelerator.device,
         )
@@ -102,7 +117,10 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
 
         # 1. Prepare the inputs
         with torch.no_grad():
-            encoder_output = self.model.text_encoder.encode_prompts(caption)
+            encoder_output = self.model.text_encoder.encode_prompts(
+                caption,
+                max_token_length=self.model_config.max_token_length,
+            )
             encoder_hidden_states, pooled_hidden_states = (
                 self.model.prepare_encoder_hidden_states(
                     encoder_output=encoder_output,
@@ -191,6 +209,7 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
                 cfg_scale=cfg_scale,
                 num_inference_steps=num_steps,
                 seed=seed,
+                max_token_length=self.model_config.max_token_length,
             )[0]
 
         self.log(
