@@ -7,27 +7,20 @@ import torchvision.transforms.v2 as v2
 
 
 from src.models.sdxl.adapter.ip_adapter import (
-    IPAdapterCrossAttentionSDXL,
     SDXLModelWithIPAdapter,
     SDXLModelWithIPAdapterConfig,
 )
-from src.models.auto import AutoImageEncoder
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
-from src.dataset.referencing_text_to_image import ReferencingTextToImageDatasetConfig
+from src.dataset.styled_text_to_image import StyledTextToImageDatasetConfig
 from src.dataset.preview.text_to_image import TextToImagePreviewConfig
-from src.dataset.transform import PaddedResize
 from src.modules.loss.diffusion import (
     prepare_noised_latents,
     loss_with_predicted_noise,
 )
 from src.modules.timestep.sampling import uniform_randint
-from src.modules.adapter.ip_adapter import (
-    IPAdapterConfig,
-    IPAdapterManager,
-    SingleImageProjector,
-)
+
 
 from src.utils.tensor import remove_orig_mod_prefix
 from src.utils.logging import wandb_image
@@ -35,14 +28,17 @@ from src.utils.logging import wandb_image
 
 class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
     model: SDXLModelWithIPAdapter
-    manager: IPAdapterManager
 
     model_config: SDXLModelWithIPAdapterConfig
     model_config_class = SDXLModelWithIPAdapterConfig
 
     def setup_model(self):
         # setup SDXL
-        self.model = SDXLModelWithIPAdapter.from_config(self.model_config)
+        self.model = SDXLModelWithIPAdapter.from_checkpoint(self.model_config)
+        self.model.freeze_base_model()
+
+        # make adapter trainable
+        self.model.manager.set_adapter_trainable(True)
 
     @property
     def raw_model(self) -> SDXLModelWithIPAdapter:
@@ -82,7 +78,7 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
             [0, 0], device=self.accelerator.device
         ).unsqueeze(0)
 
-        print(self.raw_model)
+        # print(self.raw_model)
 
         with self.accelerator.autocast():
             _noise_pred = self.model.denoiser(
@@ -124,10 +120,7 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
             )
 
             # ip adapter inputs
-            ip_features = self.encoder(
-                reference_pixel_values,
-            )
-            ip_tokens = self.projector(ip_features)
+            ip_tokens = self.model.encode_reference_image(reference_pixel_values)
 
             # cat with seq len to pass through the model
             encoder_hidden_states = torch.cat(
@@ -218,7 +211,9 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
     def get_state_dict_to_save(
         self,
     ) -> dict[str, torch.Tensor]:
-        adapter_state_dict = self.manager.get_state_dict()  # get ip adapter state dict
+        adapter_state_dict = (
+            self.raw_model.manager.get_state_dict()
+        )  # get ip adapter state dict
         # image_proj
         image_proj_state_dict = self.model.image_proj.state_dict()
         image_proj_state_dict = {
@@ -250,7 +245,7 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_train_dataset_class(ReferencingTextToImageDatasetConfig)
+    trainer.register_train_dataset_class(StyledTextToImageDatasetConfig)
     trainer.register_preview_dataset_class(TextToImagePreviewConfig)
     trainer.register_model_class(SDXLIPAdapterTraining)
 

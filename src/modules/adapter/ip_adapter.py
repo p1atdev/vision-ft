@@ -29,6 +29,16 @@ class LinearImageProjector(nn.Module):
         )
         self.norm = nn.LayerNorm(cross_attention_dim)
 
+    def init_weights(self):
+        # initialize linear layers
+        nn.init.xavier_uniform_(self.proj.weight)
+        if self.proj.bias is not None:
+            nn.init.zeros_(self.proj.bias)
+
+        # initialize layer norm
+        nn.init.ones_(self.norm.weight)
+        nn.init.zeros_(self.norm.bias)
+
     def forward(self, features: torch.Tensor):
         ip_tokens = self.proj(features).reshape(
             -1,
@@ -47,6 +57,7 @@ class IPAdapterConfig(BaseModel):
     background_color: int = 0
 
     projector_type: Literal["linear", "mlp"] = "mlp"
+    dtype: str = "bfloat16"
 
     checkpoint_weight: str | None = None
 
@@ -54,6 +65,8 @@ class IPAdapterConfig(BaseModel):
         model_name="hf_hub:timm/vit_base_patch16_siglip_384.v2_webli",
         pretrained=True,
     )
+    image_mean: list[float] = [0.5, 0.5, 0.5]
+    image_std: list[float] = [0.5, 0.5, 0.5]
     feature_dim: int = 768
 
 
@@ -128,9 +141,29 @@ class IPAdapterManager(AdapterManager):
                 f"Projector type {self.adapter_config.projector_type} not implemented."
             )
 
+    def set_adapter_trainable(self, trainable: bool = True):
+        if trainable:
+            self.module_dict.train()
+        else:
+            self.module_dict.eval()
+        self.module_dict.requires_grad_(trainable)
+
     def get_state_dict(self):
         state_dict = super().get_state_dict()
         # replace "_" with "." in the state dict keys
         state_dict = {k.replace("!", "."): v for k, v in state_dict.items()}
 
         return state_dict
+
+    def init_weights(self):
+        # initialize moduel_dict
+        for name, module in self.module_dict.named_modules():
+            if isinstance(module, nn.Linear):
+                # initialize linear layers
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                # initialize layer norm
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)

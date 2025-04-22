@@ -14,6 +14,7 @@ from ....modules.adapter.ip_adapter import (
     IPAdapterManager,
 )
 from ....utils.state_dict import RegexMatch
+from ....utils.dtype import str_to_dtype
 from ..pipeline import SDXLModel
 from ..config import SDXLConfig
 from ...auto import AutoImageEncoder
@@ -73,12 +74,24 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         self.to_k_ip.weight.data.zero_()  # zero?
         self.to_v_ip.weight.data.zero_()
 
+    def freeze_original_modules(self):
+        # freeze q, k, v, out
+        self.to_q.eval()
+        self.to_q.requires_grad_(False)
+        self.to_k.eval()
+        self.to_k.requires_grad_(False)
+        self.to_v.eval()
+        self.to_v.requires_grad_(False)
+        self.to_out.eval()
+        self.to_out.requires_grad_(False)
+
     @classmethod
     def from_module(
         cls,
         module: nn.Module,  # should be SDXL's CrossAttention
         ip_scale: float = 1.0,
         num_ip_tokens: int = 4,
+        dtype: str = "float32",
         *args,
         **kwargs,
     ) -> "IPAdapterCrossAttentionSDXL":
@@ -94,6 +107,10 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             num_ip_tokens=num_ip_tokens,
             attn_implementation=module.attn_implementation,
         )
+        new_module.freeze_original_modules()
+
+        new_module.to_k_ip.to(dtype=str_to_dtype(dtype))
+        new_module.to_v_ip.to(dtype=str_to_dtype(dtype))
 
         return new_module
 
@@ -173,6 +190,8 @@ class IPAdapterCrossAttentionSDXL(Adapter):
 
             hidden_states = text_hidden_states + self.ip_scale * ip_hidden_states
 
+        hidden_states = self.to_out(hidden_states)
+
         return hidden_states
 
 
@@ -186,15 +205,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
     def __init__(self, config: SDXLModelWithIPAdapterConfig):
         super().__init__(config)
 
-        # 1. freeze base model
-        self.freeze_base_model()
-
         # 2. setup image encoder
         self.encoder = AutoImageEncoder(
             config=self.config.adapter.image_encoder,
         )
-        self.encoder.eval()
-        self.encoder.requires_grad_(False)
 
         # 3. setup adapter
         self.manager = IPAdapterManager(
@@ -216,7 +230,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
                     fill=self.config.adapter.background_color,
                 ),
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
-                v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
+                v2.Normalize(
+                    mean=self.config.adapter.image_mean,
+                    std=self.config.adapter.image_std,
+                ),  # 0~1 -> -1~1
             ]
         )
 
@@ -228,6 +245,9 @@ class SDXLModelWithIPAdapter(SDXLModel):
         self.vae.eval()
         self.vae.requires_grad_(False)
 
+        self.encoder.eval()
+        self.encoder.requires_grad_(False)
+
     @classmethod
     def from_config(
         cls, config: SDXLModelWithIPAdapterConfig
@@ -235,7 +255,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
         return cls(config)
 
     def _from_checkpoint(self, strict: bool = True):
-        super()._from_checkpoint(strict)
+        super()._from_checkpoint(strict=False)
+
+        # freeze base model
+        self.freeze_base_model()
 
         # load adapter weights
         if checkpoint_path := self.config.adapter.checkpoint_weight:
@@ -248,6 +271,13 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 {k: v for k, v in state_dict.items() if k.startswith("image_proj.")},
                 assign=True,
             )
+        else:
+            # initialize
+            self.manager.module_dict.to_empty(device=torch.device("cpu"))
+            self.manager.init_weights()
+            self.encoder._load_model()
+            self.image_proj.to_empty(device=torch.device("cpu"))
+            self.image_proj.init_weights()
 
     @classmethod
     def from_checkpoint(
@@ -274,6 +304,15 @@ class SDXLModelWithIPAdapter(SDXLModel):
             )
 
         return reference_image
+
+    def encode_reference_image(
+        self,
+        pixel_values: torch.Tensor,
+    ):
+        encoded = self.encoder(pixel_values)
+        projection = self.image_proj(encoded)
+
+        return projection
 
     # MARK: generate
     def generate(
