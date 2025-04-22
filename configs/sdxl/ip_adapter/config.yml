@@ -10,8 +10,10 @@ model:
   adapter: # ip-adapter
     ip_scale: 1.0
     num_ip_tokens: 4
-    image_size: 384
+    image_size: 512
     background_color: 0 # 0 for black, 255 for white
+
+    projector_type: "linear"
 
     # checkpoint_weight: null
     image_encoder:
@@ -19,13 +21,16 @@ model:
       model_name: "hf_hub:timm/vit_base_patch16_siglip_384.v2_webli"
     feature_dim: 768
 
+  # training config
+  max_token_length: 225
+
 peft:
 
-# ReferencingTextToImageDatasetConfig
+# StyledTextToImageDatasetConfig
 dataset:
-  folder: "data/sfw_0.1k/images"
-  reference_folder: "data/sfw_0.1k/images"
-  image_size: 384
+  folder: "data/styled_images_1k"
+  metadata_parquet: "data/metadata_styled_images_1k.parquet"
+  style_image_size: 512
   background_color: 0 # 0 for black, 255 for white
 
   num_repeats: 4
@@ -36,14 +41,14 @@ dataset:
   min_size: 384
   do_upscale: false
 
-  caption_processors:
-    - type: shuffle
-      split_separator: ","
-    - type: tag_drop
-      separator: ","
-      drop_rate: 0.1
-    - type: drop
-      drop_rate: 0.1
+  # caption_processors:
+  #   - type: shuffle
+  #     split_separator: ","
+  #   - type: tag_drop
+  #     separator: ","
+  #     drop_rate: 0.1
+  #   - type: drop
+  #     drop_rate: 0.1
 
 optimizer:
   name: "schedulefree.RAdamScheduleFree"
@@ -92,7 +97,10 @@ trainer:
   gradient_checkpointing: true
   gradient_accumulation_steps: 1
 
-  torch_compile: true
+  clip_grad_norm: 1.0
+  # clip_grad_value: 1.0
+
+  torch_compile: false
   torch_compile_args:
     backend: eager
     mode: default

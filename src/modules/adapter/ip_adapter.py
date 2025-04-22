@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -9,7 +10,7 @@ from ...models.auto import AutoModelConfig, TimmModelConfig
 
 
 # https://github.com/tencent-ailab/IP-Adapter/blob/62e4af9d0c1ac7d5f8dd386a0ccf2211346af1a2/ip_adapter/ip_adapter.py#L28-L46
-class SingleImageProjector(nn.Module):
+class LinearImageProjector(nn.Module):
     def __init__(
         self,
         in_features: int,
@@ -45,6 +46,8 @@ class IPAdapterConfig(BaseModel):
     image_size: int = 384
     background_color: int = 0
 
+    projector_type: Literal["linear", "mlp"] = "mlp"
+
     checkpoint_weight: str | None = None
 
     image_encoder: AutoModelConfig = TimmModelConfig(
@@ -56,6 +59,8 @@ class IPAdapterConfig(BaseModel):
 
 # MARK: IPAdapterManager
 class IPAdapterManager(AdapterManager):
+    adapter_config: IPAdapterConfig
+
     def __init__(
         self,
         adapter_class: type[Adapter] = Adapter,
@@ -110,6 +115,18 @@ class IPAdapterManager(AdapterManager):
             # later we will replace "!" with "." in the state dict.
 
         self.module_dict.update(module_dict)
+
+    def get_projector(self, attention_dim: int):
+        if self.adapter_config.projector_type == "linear":
+            return LinearImageProjector(
+                in_features=self.adapter_config.feature_dim,
+                cross_attention_dim=attention_dim,
+                num_ip_tokens=self.adapter_config.num_ip_tokens,
+            )
+        else:
+            raise NotImplementedError(
+                f"Projector type {self.adapter_config.projector_type} not implemented."
+            )
 
     def get_state_dict(self):
         state_dict = super().get_state_dict()

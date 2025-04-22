@@ -12,7 +12,6 @@ from ....modules.adapter.ip_adapter import (
     Adapter,
     IPAdapterConfig,
     IPAdapterManager,
-    SingleImageProjector,
 )
 from ....utils.state_dict import RegexMatch
 from ..pipeline import SDXLModel
@@ -204,10 +203,8 @@ class SDXLModelWithIPAdapter(SDXLModel):
         )
         self.manager.apply_adapter(self)
         # 4. setup projector
-        self.image_proj = SingleImageProjector(
-            in_features=self.config.adapter.feature_dim,
-            cross_attention_dim=self.config.denoiser.context_dim,  # 2048
-            num_ip_tokens=self.config.adapter.num_ip_tokens,
+        self.image_proj = self.manager.get_projector(
+            attention_dim=self.config.denoiser.context_dim,
         )  # trainable
 
         # 5. preprocessor
@@ -247,12 +244,6 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 self.model,
                 {k: v for k, v in state_dict.items() if k.startswith("ip_adapter.")},
             )
-            with init_empty_weights():
-                self.image_proj = SingleImageProjector(
-                    in_features=self.model_config.adapter.feature_dim,
-                    cross_attention_dim=self.model_config.denoiser.context_dim,  # 2048
-                    num_ip_tokens=self.model_config.adapter.num_ip_tokens,
-                )  # trainable
             self.image_proj.load_state_dict(
                 {k: v for k, v in state_dict.items() if k.startswith("image_proj.")},
                 assign=True,
