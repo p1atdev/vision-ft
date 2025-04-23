@@ -15,6 +15,9 @@ class AbstractAutoModelConfig(BaseModel, ABC):
     model_name: str
     config: dict
 
+    feature_type: Literal["hidden_state", "pooler_output"] = "pooler_output"
+    hidden_state_index: int = -1
+
     @abstractmethod
     def setup_model(self) -> nn.Module:
         """
@@ -106,17 +109,40 @@ class AutoImageEncoder(nn.Module):
         self.model = self.config.load_model()
 
     def encode(self, pixel_values: torch.Tensor, **kwargs) -> torch.Tensor:
+        feature_type = self.config.feature_type
+
         if isinstance(self.config, TransformersModelConfig):
-            outputs = self.model(pixel_values, **kwargs)
-            return outputs.pooler_output
+            outputs = self.model(pixel_values, return_hidden_states=True, **kwargs)
+            if feature_type == "hidden_state":
+                # Get the last hidden state
+                hidden_state = outputs.hidden_states[self.config.hidden_state_index]
+                # maybe [batch_size, NxN, num_features]?
+
+                return hidden_state
+
+            elif feature_type == "pooler_output":
+                return outputs.pooler_output
+
         elif isinstance(self.config, TimmModelConfig):
-            last_hidden_state = self.model.forward_features(pixel_values, **kwargs)
-            pooler_output = self.model.forward_head(last_hidden_state)
-            return pooler_output
-        else:
-            raise NotImplementedError(
-                f"Model type {type(self.model)} is not supported."
-            )
+            if feature_type == "hidden_state":
+                _output, intermediates = self.model.forward_intermediates(
+                    pixel_values, **kwargs
+                )
+                hidden_state = intermediates[self.config.hidden_state_index]
+                # maybe [batch_size, num_features, N, N]
+                batch_size, dim, _h, _w = hidden_state.size()
+
+                hidden_state = hidden_state.permute(0, 2, 3, 1).reshape(
+                    batch_size, -1, dim
+                )
+                return hidden_state
+
+            elif feature_type == "pooler_output":
+                last_hidden_state = self.model.forward_features(pixel_values, **kwargs)
+                pooler_output = self.model.forward_head(last_hidden_state)
+                return pooler_output
+
+        raise NotImplementedError(f"Model type {type(self.model)} is not supported.")
 
     def forward(self, pixel_values: torch.Tensor, **kwargs) -> torch.Tensor:
         return self.encode(pixel_values, **kwargs)
