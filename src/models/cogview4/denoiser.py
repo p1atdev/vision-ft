@@ -17,21 +17,11 @@ from ...modules.timestep.embedding import (
     get_timestep_embedding,
 )
 from ...modules.offload import OffloadableModuleMixin
+from ...modules.norm import FP32LayerNorm
 
 from .config import DenoiserConfig
 
 # mostly from https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_cogview4.py
-
-
-class FP32LayerNorm(nn.LayerNorm):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return F.layer_norm(
-            hidden_states.to(torch.float32),
-            self.normalized_shape,
-            self.weight.to(torch.float32) if self.weight is not None else None,
-            self.bias.to(torch.float32) if self.bias is not None else None,
-            self.eps,
-        ).to(hidden_states.dtype)
 
 
 class GlobalConditionEmbedding(nn.Module):
