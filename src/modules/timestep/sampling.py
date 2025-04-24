@@ -129,6 +129,33 @@ def uniform_randint(
     return timesteps  # type: ignore[return-value]
 
 
+def gaussian_randint(
+    latents_shape: torch.Size,
+    device: torch.device,
+    min_timesteps: int = 0,
+    max_timesteps: int = 1000,
+    mean: float = 500,
+    std: float = 500,
+) -> torch.IntTensor:
+    """
+    0 ~ max_value の各整数 i に対して
+      w_i = exp(-0.5 * ((i - mean) / std) ** 2)
+    の重みを与え、正規化した上で num_samples 個サンプリングして返す。
+    """
+    batch_size = latents_shape[0]
+
+    # i = 0,1,...,max_value
+    idx = torch.arange(
+        min_timesteps, max_timesteps + 1, dtype=torch.float32, device=device
+    )
+    weights = torch.exp(-0.5 * ((idx - mean) / std) ** 2)
+    probs = weights / weights.sum()
+
+    timesteps = torch.multinomial(probs, num_samples=batch_size, replacement=True).int()
+
+    return timesteps  # type: ignore[return-value]
+
+
 def sigmoid_randint(
     latents_shape: torch.Size,
     device: torch.device,
