@@ -1,4 +1,5 @@
 from PIL import Image
+from typing import Literal
 import click
 
 import torch
@@ -21,7 +22,7 @@ from src.modules.loss.diffusion import (
     prepare_noised_latents,
     loss_with_predicted_noise,
 )
-from src.modules.timestep.sampling import uniform_randint
+from src.modules.timestep.sampling import uniform_randint, gaussian_randint
 
 
 from src.utils.tensor import remove_orig_mod_prefix
@@ -33,6 +34,9 @@ class SDXLModelWithStyleTokenizerTrainingConfig(SDXLModelWithStyleTokenizerConfi
 
     freeze_vision_encoder: bool = True
     freeze_projector: bool = False
+
+    timestep_sampling: Literal["uniform", "gaussian"] = "uniform"
+    timestep_sampling_args: dict = {}
 
 
 class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
@@ -115,6 +119,29 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
 
         self.print("Sanity check passed.")
 
+    def sample_timestep(self, shape: torch.Size) -> torch.IntTensor:
+        args = self.model_config.timestep_sampling_args
+        if self.model_config.timestep_sampling == "uniform":
+            return uniform_randint(
+                latents_shape=shape,
+                device=self.accelerator.device,
+                min_timesteps=args.get("min_timesteps", 0),
+                max_timesteps=args.get("max_timesteps", 1000),
+            )
+        elif self.model_config.timestep_sampling == "gaussian":
+            return gaussian_randint(
+                latents_shape=shape,
+                device=self.accelerator.device,
+                min_timesteps=args.get("min_timesteps", 0),
+                max_timesteps=args.get("max_timesteps", 1000),
+                mean=args.get("mean", 100),
+                std=args.get("std", 100),
+            )
+
+        raise ValueError(
+            f"Invalid sampling type: {self.model_config.timestep_sampling}"
+        )
+
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
         caption = batch["caption"]
@@ -147,12 +174,7 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
         # 3. Prepare other inputs
         with torch.no_grad():
             latents = self.model.encode_image(pixel_values)
-            timesteps = uniform_randint(
-                latents_shape=latents.shape,
-                device=self.accelerator.device,
-                min_timesteps=0,
-                max_timesteps=1000,  # change this for addift?
-            )
+            timesteps = self.sample_timestep(latents.shape)
 
         # repare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(

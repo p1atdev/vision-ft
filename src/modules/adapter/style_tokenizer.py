@@ -3,11 +3,13 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 from .util import Adapter, AdapterManager
 from ...models.auto import AutoModelConfig, TimmModelConfig
 from ...modules.attention import AttentionImplementation, scaled_dot_product_attention
+from ..norm import FP32LayerNorm
 
 
 class LinearImageProjector(nn.Module):
@@ -38,6 +40,7 @@ class LinearImageProjector(nn.Module):
         nn.init.zeros_(self.norm.bias)
 
     def forward(self, features: torch.Tensor):
+        features = F.normalize(features, p=2, dim=-1)
         style_tokens = self.projection(features).reshape(
             -1,
             self.num_style_tokens,
@@ -70,6 +73,11 @@ class MLPImageProjector(nn.Module):
             nn.SiLU(),
             nn.Linear(in_features, out_features * num_style_tokens),
         )
+        self.norm = FP32LayerNorm(
+            out_features,
+            elementwise_affine=False,
+            eps=1e-6,
+        )
 
     def init_weights(self):
         nn.init.xavier_normal_(self.mlp[0].weight)
@@ -80,17 +88,15 @@ class MLPImageProjector(nn.Module):
             nn.init.zeros_(self.mlp[2].bias)
 
     def forward(self, features: torch.Tensor):
+        features = F.normalize(features, p=2, dim=-1)
         style_tokens = self.mlp(features).reshape(
             -1,
             self.num_style_tokens,
             self.out_features,
         )
+        style_tokens = self.norm(style_tokens)
 
-        return style_tokens.reshape(
-            -1,
-            self.num_style_tokens,
-            self.out_features,
-        )
+        return style_tokens
 
 
 class Transformer(nn.Module):
@@ -109,7 +115,7 @@ class Transformer(nn.Module):
 
         self.attention_backend: AttentionImplementation = attention_backend
 
-        self.norm_in = nn.LayerNorm(in_features)
+        self.norm_in = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
 
         self.to_q = nn.Linear(in_features, in_features, bias=False)
         self.to_k = nn.Linear(in_features, in_features, bias=False)
@@ -117,7 +123,7 @@ class Transformer(nn.Module):
 
         self.to_out = nn.Linear(in_features, in_features)
 
-        self.norm_out = nn.LayerNorm(in_features)
+        self.norm_out = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
 
         self.mlp = nn.Sequential(
             nn.Linear(in_features, int(in_features * mlp_ratio)),
@@ -197,10 +203,16 @@ class TransformerImageProjector(nn.Module):
             ]
         )
 
-        self.mlp = nn.Sequential(
-            nn.Linear(in_features, in_features),
-            nn.SiLU(),
-            nn.Linear(in_features, out_features * num_style_tokens),
+        self.norm = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
+
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(in_features, in_features),
+        #     nn.SiLU(),
+        #     nn.Linear(in_features, out_features * num_style_tokens),
+        # )
+        self.projection = nn.Linear(
+            in_features,
+            out_features * num_style_tokens,
         )
 
     def init_transformer_weights(self, module: nn.Module):
@@ -209,25 +221,36 @@ class TransformerImageProjector(nn.Module):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.LayerNorm):
-            nn.init.ones_(module.weight)
-            nn.init.zeros_(module.bias)
+            if module.weight is not None:
+                nn.init.ones_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def init_weights(self):
         for _name, module in self.transformer.named_modules():
             module.apply(self.init_transformer_weights)
 
-        nn.init.xavier_normal_(self.mlp[0].weight)
-        if self.mlp[0].bias is not None:
-            nn.init.zeros_(self.mlp[0].bias)
-        nn.init.zeros_(self.mlp[2].weight)  # zero init for last layer
-        if self.mlp[2].bias is not None:
-            nn.init.zeros_(self.mlp[2].bias)
+        # nn.init.xavier_normal_(self.mlp[0].weight)
+        # if self.mlp[0].bias is not None:
+        #     nn.init.zeros_(self.mlp[0].bias)
+        # nn.init.zeros_(self.mlp[2].weight)  # zero init for last layer
+        # if self.mlp[2].bias is not None:
+        #     nn.init.zeros_(self.mlp[2].bias)
+
+        nn.init.zeros_(self.projection.weight)
+        if self.projection.bias is not None:
+            nn.init.zeros_(self.projection.bias)
 
     def forward(self, features: torch.Tensor):
+        features = F.normalize(features, p=2, dim=-1)
         style_features = self.transformer(features)
+        style_features = self.norm(style_features)
+
         pooled_features = torch.mean(style_features, dim=1)  # mean pooling
 
-        style_tokens = self.mlp(pooled_features).reshape(
+        # style_tokens = self.mlp(pooled_features)
+        style_tokens = self.projection(pooled_features)
+        style_tokens = style_tokens.reshape(
             -1,
             self.num_style_tokens,
             self.out_features,
