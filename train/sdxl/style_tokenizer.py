@@ -152,8 +152,12 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
         reference_pixel_values = batch["reference_image"]  # style image input
 
         # 1. Encode refefrence images
-        style_tokens_1, style_tokens_2 = self.model.encode_reference_image(
+        reference_output = self.model.encode_reference_image(
             reference_pixel_values,
+        )
+        style_tokens_1, style_tokens_2 = (
+            reference_output.style_tokens_1,
+            reference_output.style_tokens_2,
         )
 
         # 2. Encode text prompts and style tokens

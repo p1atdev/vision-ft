@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import torch
 import torch.nn as nn
@@ -8,8 +8,12 @@ import torch.nn.functional as F
 
 from .util import Adapter, AdapterManager
 from ...models.auto import AutoModelConfig, TimmModelConfig
-from ...modules.attention import AttentionImplementation, scaled_dot_product_attention
+from ..attention import AttentionImplementation, scaled_dot_product_attention
 from ..norm import FP32LayerNorm
+
+
+class ProjectionOutput(NamedTuple):
+    style_tokens: torch.Tensor
 
 
 class LinearImageProjector(nn.Module):
@@ -29,29 +33,32 @@ class LinearImageProjector(nn.Module):
             in_features,
             out_features * num_style_tokens,
         )
-        self.norm = nn.LayerNorm(out_features)
+        # self.norm = FP32LayerNorm(out_features)
 
     def init_weights(self):
         nn.init.zeros_(self.projection.weight)
         if self.projection.bias is not None:
             nn.init.zeros_(self.projection.bias)
 
-        nn.init.ones_(self.norm.weight)
-        nn.init.zeros_(self.norm.bias)
+        # nn.init.ones_(self.norm.weight)
+        # nn.init.zeros_(self.norm.bias)
 
-    def forward(self, features: torch.Tensor):
-        features = F.normalize(features, p=2, dim=-1)
+    def forward(self, features: torch.Tensor) -> ProjectionOutput:
+        # features = F.normalize(features, p=2, dim=-1)
         style_tokens = self.projection(features).reshape(
             -1,
             self.num_style_tokens,
             self.out_features,
         )
-        style_tokens = self.norm(style_tokens)
-
-        return style_tokens.reshape(
+        style_tokens = style_tokens.reshape(
             -1,
             self.num_style_tokens,
             self.out_features,
+        )
+        # style_tokens = self.norm(style_tokens)
+
+        return ProjectionOutput(
+            style_tokens=style_tokens,
         )
 
 
@@ -73,30 +80,32 @@ class MLPImageProjector(nn.Module):
             nn.SiLU(),
             nn.Linear(in_features, out_features * num_style_tokens),
         )
-        self.norm = FP32LayerNorm(
-            out_features,
-            elementwise_affine=False,
-            eps=1e-6,
-        )
+        # self.norm = FP32LayerNorm(
+        #     out_features,
+        #     elementwise_affine=False,
+        #     eps=1e-6,
+        # )
 
     def init_weights(self):
         nn.init.xavier_normal_(self.mlp[0].weight)
         if self.mlp[0].bias is not None:
             nn.init.zeros_(self.mlp[0].bias)
-        nn.init.zeros_(self.mlp[2].weight)
+        nn.init.xavier_normal_(self.mlp[2].weight)
         if self.mlp[2].bias is not None:
             nn.init.zeros_(self.mlp[2].bias)
 
-    def forward(self, features: torch.Tensor):
-        features = F.normalize(features, p=2, dim=-1)
+    def forward(self, features: torch.Tensor) -> ProjectionOutput:
+        # features = F.normalize(features, p=2, dim=-1)
         style_tokens = self.mlp(features).reshape(
             -1,
             self.num_style_tokens,
             self.out_features,
         )
-        style_tokens = self.norm(style_tokens)
+        # style_tokens = self.norm(style_tokens)
 
-        return style_tokens
+        return ProjectionOutput(
+            style_tokens=style_tokens,
+        )
 
 
 class Transformer(nn.Module):
@@ -115,7 +124,8 @@ class Transformer(nn.Module):
 
         self.attention_backend: AttentionImplementation = attention_backend
 
-        self.norm_in = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
+        self.norm_in_1 = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
+        self.norm_in_2 = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
 
         self.to_q = nn.Linear(in_features, in_features, bias=False)
         self.to_k = nn.Linear(in_features, in_features, bias=False)
@@ -145,13 +155,14 @@ class Transformer(nn.Module):
 
         return tensor.permute(0, 2, 1, 3).reshape(batch_size, seq_len, self.in_features)
 
-    def forward(self, hidden_states: torch.Tensor):
-        residual = hidden_states
-        hidden_states = self.norm_in(hidden_states)
+    def attention(self, style_query: torch.Tensor, hidden_states: torch.Tensor):
+        style_query = self.norm_in_1(style_query)
+        hidden_states = self.norm_in_2(hidden_states)
 
-        query = self.to_q(hidden_states)
-        key = self.to_k(hidden_states)
-        value = self.to_v(hidden_states)
+        query = self.to_q(style_query)
+        kv_input = torch.cat([hidden_states, style_query], dim=1)
+        key = self.to_k(kv_input)
+        value = self.to_v(kv_input)
 
         query = self._pre_attn_reshape(query)
         key = self._pre_attn_reshape(key)
@@ -166,15 +177,18 @@ class Transformer(nn.Module):
         attn = self._post_attn_reshape(attn)
 
         attn = self.to_out(attn)
-        attn = self.norm_out(attn) + residual
+        attn = self.norm_out(attn)
 
-        residual = attn
-        hidden_states = self.mlp(attn) + residual
+        return attn
 
-        return hidden_states
+    def forward(self, style_query: torch.Tensor, hidden_states: torch.Tensor):
+        style_query = self.attention(style_query, hidden_states) + style_query
+        style_query = self.mlp(style_query) + style_query
+
+        return style_query
 
 
-class TransformerImageProjector(nn.Module):
+class ResamplerImageProjector(nn.Module):
     def __init__(
         self,
         in_features: int,
@@ -191,10 +205,13 @@ class TransformerImageProjector(nn.Module):
         self.out_features = out_features
         self.num_style_tokens = num_style_tokens
 
-        self.transformer = nn.Sequential(
-            *[
+        self.style_query = nn.Parameter(torch.randn(1, num_style_tokens, out_features))
+        self.proj_in = nn.Linear(in_features, out_features)
+
+        self.transformer = nn.ModuleList(
+            [
                 Transformer(
-                    in_features=in_features,
+                    in_features=out_features,
                     num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
                     attention_backend=attn_implementation,
@@ -203,17 +220,8 @@ class TransformerImageProjector(nn.Module):
             ]
         )
 
-        self.norm = FP32LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
-
-        # self.mlp = nn.Sequential(
-        #     nn.Linear(in_features, in_features),
-        #     nn.SiLU(),
-        #     nn.Linear(in_features, out_features * num_style_tokens),
-        # )
-        self.projection = nn.Linear(
-            in_features,
-            out_features * num_style_tokens,
-        )
+        self.norm_out = FP32LayerNorm(out_features, elementwise_affine=False, eps=1e-6)
+        self.proj_out = nn.Linear(out_features, out_features)
 
     def init_transformer_weights(self, module: nn.Module):
         if isinstance(module, nn.Linear):
@@ -230,33 +238,37 @@ class TransformerImageProjector(nn.Module):
         for _name, module in self.transformer.named_modules():
             module.apply(self.init_transformer_weights)
 
-        # nn.init.xavier_normal_(self.mlp[0].weight)
-        # if self.mlp[0].bias is not None:
-        #     nn.init.zeros_(self.mlp[0].bias)
-        # nn.init.zeros_(self.mlp[2].weight)  # zero init for last layer
-        # if self.mlp[2].bias is not None:
-        #     nn.init.zeros_(self.mlp[2].bias)
-
-        nn.init.zeros_(self.projection.weight)
-        if self.projection.bias is not None:
-            nn.init.zeros_(self.projection.bias)
-
-    def forward(self, features: torch.Tensor):
-        features = F.normalize(features, p=2, dim=-1)
-        style_features = self.transformer(features)
-        style_features = self.norm(style_features)
-
-        pooled_features = torch.mean(style_features, dim=1)  # mean pooling
-
-        # style_tokens = self.mlp(pooled_features)
-        style_tokens = self.projection(pooled_features)
-        style_tokens = style_tokens.reshape(
-            -1,
-            self.num_style_tokens,
-            self.out_features,
+        self.style_query.data = (
+            torch.randn(1, self.num_style_tokens, self.out_features)
+            / self.out_features**0.5
         )
 
-        return style_tokens
+        # init with almost zero
+        # nn.init.uniform_(self.proj_out.weight, a=-0.01, b=0.01)
+        nn.init.zeros_(self.proj_out.weight)
+        if self.proj_out.bias is not None:
+            nn.init.zeros_(self.proj_out.bias)
+
+        if self.norm_out.weight is not None:
+            nn.init.ones_(self.norm_out.weight)
+        if self.norm_out.bias is not None:
+            nn.init.zeros_(self.norm_out.bias)
+
+    def forward(self, features: torch.Tensor):
+        batch_size, _seq_len, _dim = features.size()
+
+        style_query = self.style_query.repeat(batch_size, 1, 1)
+
+        features = self.proj_in(features)
+        for layer in self.transformer:
+            style_query = layer(style_query, features)
+
+        style_tokens = self.proj_out(style_query)
+        style_tokens = self.norm_out(style_tokens)
+
+        return ProjectionOutput(
+            style_tokens=style_tokens,
+        )
 
 
 class StyleTokenizerConfig(BaseModel):
@@ -265,7 +277,7 @@ class StyleTokenizerConfig(BaseModel):
     image_size: int = 512
     background_color: int = 0
 
-    projector_type: Literal["linear", "mlp", "transformer"] = "mlp"
+    projector_type: Literal["linear", "mlp", "resampler"] = "mlp"
     projector_args: dict = {}
 
     checkpoint_weight: str | None = None
@@ -308,8 +320,8 @@ class StyleTokenizerManager(AdapterManager):
                 num_style_tokens=self.adapter_config.num_style_tokens,
                 **self.adapter_config.projector_args,
             )
-        elif self.adapter_config.projector_type == "transformer":
-            return TransformerImageProjector(
+        elif self.adapter_config.projector_type == "resampler":
+            return ResamplerImageProjector(
                 in_features=self.adapter_config.feature_dim,
                 out_features=out_features,
                 num_style_tokens=self.adapter_config.num_style_tokens,

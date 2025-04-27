@@ -1,5 +1,6 @@
 from PIL import Image
 from tqdm import tqdm
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
@@ -335,6 +336,11 @@ class TextEncoderWithStyle(TextEncoder):
         )
 
 
+class ReferenceEncodeOutput(NamedTuple):
+    style_tokens_1: torch.Tensor
+    style_tokens_2: torch.Tensor
+
+
 class SDXLModelWithStyleTokenizer(SDXLModel):
     config: SDXLModelWithStyleTokenizerConfig
 
@@ -473,12 +479,15 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
 
     def encode_reference_image(
         self, pixel_values: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> ReferenceEncodeOutput:
         encoded = self.vision_encoder(pixel_values)
-        style_tokens_1 = self.projector_1(encoded)
-        style_tokens_2 = self.projector_2(encoded)
+        style_tokens_1 = self.projector_1(encoded).style_tokens
+        style_tokens_2 = self.projector_2(encoded).style_tokens
 
-        return style_tokens_1, style_tokens_2
+        return ReferenceEncodeOutput(
+            style_tokens_1=style_tokens_1,
+            style_tokens_2=style_tokens_2,
+        )
 
     # MARK: generate
     def generate(
@@ -523,9 +532,12 @@ class SDXLModelWithStyleTokenizer(SDXLModel):
             reference_image = self.preprocess_reference_image(reference_image).to(
                 execution_device
             )
+            _reference_output = self.encode_reference_image(reference_image)
             positive_style_tokens_1, positive_style_tokens_2 = (
-                self.encode_reference_image(reference_image)
+                _reference_output.style_tokens_1,
+                _reference_output.style_tokens_2,
             )
+
             if do_offloading:
                 self.image_proj.to("cpu")
                 torch.cuda.empty_cache()
