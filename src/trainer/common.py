@@ -268,7 +268,6 @@ class Trainer:
             self.optimizer.eval()  # type: ignore  # Some optimizers might not have an eval method
 
     def before_train_step(self):
-        self.optimizer.zero_grad()
         self.raw_model.before_train_step()
 
     def after_train_step(self):
@@ -352,9 +351,10 @@ class Trainer:
     def backward(self, loss: torch.Tensor):
         self.raw_model.before_backward()
         self.accelerator.backward(loss)
+        self.raw_model.after_backward()
         self.optimizer.step()
         self.scheduler.step()
-        self.raw_model.after_backward()
+        self.optimizer.zero_grad()
 
     def call_saving_callbacks(self, epoch: int, steps: int):
         if self.saving_strategy.should_save(epoch, steps):
