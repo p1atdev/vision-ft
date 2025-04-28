@@ -216,21 +216,53 @@ class TextEncoder(nn.Module):
 
         # chunked long prompts: [batch_size * num_chunks, seq_len, hidden_size]
         # convert to [batch_size, seq_len * num_chunks, hidden_size]
+        _, seq_len, dim = prompt_encodings.size()
         prompt_encodings = prompt_encodings.view(
             num_all_prompts,
-            -1,  # 77 * 3 = 231?
-            prompt_encodings.size(-1),
+            -1,  # 3
+            seq_len,  # 77
+            dim,
+        )
+
+        # we have to remove intermediate eos and bos token
+        without_bos_eos = prompt_encodings[
+            :, :, 1:-1, :
+        ]  # [batch_size, num_chunks, 75, dim]
+        # reshape and cat bos and eos
+        without_bos_eos = without_bos_eos.reshape(num_all_prompts, -1, dim)
+        first_bos = prompt_encodings[:, 0, 0, :].unsqueeze(1)  # [batch_size, 1, dim]
+        last_eos = prompt_encodings[:, -1, -1, :].unsqueeze(1)  # [batch_size, 1, dim]
+        with_bos_eos = torch.cat(
+            [
+                first_bos,
+                without_bos_eos,
+                last_eos,
+            ],
+            dim=1,  # seq_len
         )
 
         # 4. Get attention mask
+        # same energy
         attention_mask = attention_mask.view(
             num_all_prompts,
-            -1,
+            -1,  # 3
+            seq_len,  # 77
+        )
+        attention_mask = torch.cat(
+            [
+                attention_mask[:, 0, 0].unsqueeze(1),  # [batch_size, 1]
+                attention_mask[:, :, 1:-1].reshape(  # [batch_size, 75 * N]
+                    num_all_prompts,
+                    -1,
+                ),
+                attention_mask[:, -1, -1].unsqueeze(1),  # [batch_size, 1]
+            ],
+            dim=1,  # seq len
         )
 
         # 6. Split prompts and negative prompts
-        positive_embeddings = prompt_encodings[:num_prompts]
-        negative_embeddings = prompt_encodings[num_prompts:]
+        positive_embeddings = with_bos_eos[:num_prompts]
+        negative_embeddings = with_bos_eos[num_prompts:]
 
         positive_attention_mask = attention_mask[:num_prompts]
         negative_attention_mask = attention_mask[num_prompts:]
@@ -256,9 +288,10 @@ class TextEncoder(nn.Module):
             use_negative_prompts,
         )
         prompts_batch_size = len(_prompts)
+        num_all_prompts = len(_prompts + _negative_prompts)
 
         # 2. Tokenize prompts
-        input_ids, attention_mask = tokenize_long_prompt(
+        input_ids, _attention_mask = tokenize_long_prompt(
             tokenizer=self.tokenizer_2,
             prompts=_prompts + _negative_prompts,
             max_length=max_token_length,
@@ -274,25 +307,48 @@ class TextEncoder(nn.Module):
         encoder_hidden_state: torch.Tensor = outputs.hidden_states[
             -2
         ]  # penultimate layer
-        encoder_hidden_state = encoder_hidden_state.view(
-            len(_prompts + _negative_prompts),
-            -1,  # 77 * 3 = 231?
-            encoder_hidden_state.size(-1),
+
+        # chunked long prompts: [batch_size * num_chunks, seq_len, hidden_size]
+        # convert to [batch_size, seq_len * num_chunks, hidden_size]
+        _, seq_len, dim = encoder_hidden_state.size()
+        prompt_encodings = encoder_hidden_state.view(
+            num_all_prompts,
+            -1,  # 3
+            seq_len,  # 77
+            dim,
         )
+
+        # we have to remove intermediate eos and bos token
+        without_bos_eos = prompt_encodings[
+            :, :, 1:-1, :
+        ]  # [batch_size, num_chunks, 75, dim]
+        # reshape and cat bos and eos
+        without_bos_eos = without_bos_eos.reshape(num_all_prompts, -1, dim)
+        first_bos = prompt_encodings[:, 0, 0, :].unsqueeze(1)  # [batch_size, 1, dim]
+        last_eos = prompt_encodings[:, -1, -1, :].unsqueeze(1)  # [batch_size, 1, dim]
+        with_bos_eos = torch.cat(
+            [
+                first_bos,
+                without_bos_eos,
+                last_eos,
+            ],
+            dim=1,  # seq_len
+        )
+
         # https://github.com/huggingface/transformers/blob/0d6a60fe55fe051a1a68f2026d19223ed57b3c75/src/transformers/models/clip/modeling_clip.py#L1489
         pooled_embeddings = (
             outputs.text_embeds
         )  # [batch_size * num_chunks, hidden_size]
         # we only take the first chunk
         pooled_embeddings = pooled_embeddings.view(
-            len(_prompts + _negative_prompts),
+            num_all_prompts,
             -1,  # 3?
             pooled_embeddings.size(-1),
         )[:, 0, :].squeeze(1)  # [batch_size, hidden_size]
 
         # 4. Split prompts and negative prompts
-        positive_embeddings = encoder_hidden_state[:prompts_batch_size]
-        negative_embeddings = encoder_hidden_state[prompts_batch_size:]
+        positive_embeddings = with_bos_eos[:prompts_batch_size]
+        negative_embeddings = with_bos_eos[prompts_batch_size:]
 
         pooled_positive_embeddings = pooled_embeddings[:prompts_batch_size]
         pooled_negative_embeddings = pooled_embeddings[prompts_batch_size:]
