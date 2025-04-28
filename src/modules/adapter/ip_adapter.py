@@ -81,10 +81,10 @@ class MLPImageProjector(nn.Module):
         self.norm = FP32LayerNorm(cross_attention_dim)
 
     def init_weights(self):
-        nn.init.kaiming_uniform_(self.mlp[0].weight)
+        nn.init.normal_(self.mlp[0].weight, mean=0.0, std=0.02)
         if self.mlp[0].bias is not None:
             nn.init.zeros_(self.mlp[0].bias)
-        nn.init.kaiming_uniform_(self.mlp[2].weight)
+        nn.init.normal_(self.mlp[2].weight, mean=0.0, std=0.02)
         # nn.init.uniform_(self.mlp[2].weight, a=-0.01, b=0.01)  # almost zero
         if self.mlp[2].bias is not None:
             nn.init.zeros_(self.mlp[2].bias)
@@ -234,7 +234,7 @@ class ResamplerProjector(nn.Module):
         def _init(module: nn.Module):
             if isinstance(module, nn.Linear):
                 # initialize linear layers
-                nn.init.xavier_uniform_(module.weight)
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.LayerNorm):
@@ -252,13 +252,13 @@ class ResamplerProjector(nn.Module):
         )
 
         # in
-        nn.init.xavier_normal_(self.proj_in.weight)
+        nn.init.normal_(self.proj_in.weight, mean=0.0, std=0.02)
         if self.proj_in.bias is not None:
             nn.init.zeros_(self.proj_in.bias)
 
         # out
-        # nn.init.uniform_(self.proj_out.weight, a=-0.01, b=0.01)  # almost zero
-        nn.init.zeros_(self.proj_out.weight)
+        # nn.init.zeros_(self.proj_out.weight)
+        nn.init.normal_(self.proj_out.weight, mean=0.0, std=0.02)
         if self.proj_out.bias is not None:
             nn.init.zeros_(self.proj_out.bias)
         if self.norm_out.weight is not None:
@@ -422,12 +422,13 @@ class IPAdapterManager(AdapterManager):
             if isinstance(module, nn.Linear):
                 # initialize linear layers
                 # to_v -> zero
-                # if "to_v" in name:
-                #     nn.init.uniform_(module.weight, a=-0.01, b=0.01)  # almost zero
-                # else:
-                #     # to_k -> random
-                #     nn.init.xavier_uniform_(module.weight)
-                nn.init.xavier_uniform_(module.weight)
+                if "to_v" in name:
+                    nn.init.zeros_(module.weight)
+                else:
+                    # to_k -> random
+                    nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                # nn.init.xavier_uniform_(module.weight)
+                # nn.init.normal_(module.weight, mean=0.0, std=0.02)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.LayerNorm):

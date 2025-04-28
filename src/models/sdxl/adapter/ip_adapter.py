@@ -153,36 +153,36 @@ class IPAdapterCrossAttentionSDXL(Adapter):
     def forward(
         self,
         latents: torch.Tensor,
-        context: torch.Tensor,  # encoder hidden states
+        context: torch.Tensor,  # encoder hidden states + ip tokens
         mask: torch.Tensor | None = None,
     ):
         # 1. separate text encoder_hiden_states and ip_tokens
         text_hidden_states = context[:, : -self.num_ip_tokens, :]
         ip_tokens = context[:, -self.num_ip_tokens :, :]
 
+        # 2. attention latents and text features
         query = self.to_q(latents)
         text_key = self.to_k(text_hidden_states)
         text_vey = self.to_v(text_hidden_states)
 
-        text_hidden_states = self.cross_attention(
+        hidden_states = self.cross_attention(
             query=query,
             key=text_key,
             value=text_vey,
             mask=mask,
         )
 
-        if ip_tokens.size(1) == self.num_ip_tokens:
-            ip_key = self.to_k_ip(ip_tokens)
-            ip_value = self.to_v_ip(ip_tokens)
+        # 3. attention ip tokens
+        ip_key = self.to_k_ip(ip_tokens)
+        ip_value = self.to_v_ip(ip_tokens)
 
-            ip_hidden_states = self.cross_attention(
-                query=query,
-                key=ip_key,
-                value=ip_value,
-                mask=None,
-            )
-
-            hidden_states = text_hidden_states + self.ip_scale * ip_hidden_states
+        ip_hidden_states = self.cross_attention(
+            query=query,
+            key=ip_key,
+            value=ip_value,
+            mask=None,
+        )
+        hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
         hidden_states = self.to_out(hidden_states)
 
@@ -296,6 +296,8 @@ class SDXLModelWithIPAdapter(SDXLModel):
             reference_image = torch.stack(
                 [self.preprocessor(image) for image in reference_image]
             )
+        elif isinstance(reference_image, torch.Tensor):
+            reference_image: torch.Tensor = self.preprocessor(reference_image)
 
         return reference_image
 
