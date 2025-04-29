@@ -307,18 +307,19 @@ class Trainer:
 
                         with self.accelerator.autocast():
                             loss = self.model(batch)
-                        self.backward(loss)
-                        pbar.set_postfix({"loss": loss.item()})
+                            self.backward(loss)
 
-                        pbar.update(1)
+                    pbar.set_postfix({"loss": loss.item()})
 
-                        self.call_saving_callbacks(epoch, current_step)
-                        self.call_preview_callbacks(epoch, current_step)
+                    pbar.update(1)
 
-                        self.after_train_step()
+                    self.call_saving_callbacks(epoch, current_step)
+                    self.call_preview_callbacks(epoch, current_step)
 
-                        if self.debug_mode == "1step":
-                            break
+                    self.after_train_step()
+
+                    if self.debug_mode == "1step":
+                        break
 
             self.after_train_epoch()
             self.raw_model.log("epoch", epoch)
@@ -351,7 +352,7 @@ class Trainer:
     def backward(self, loss: torch.Tensor):
         self.raw_model.before_backward()
         self.accelerator.backward(loss)
-        self.raw_model.after_backward()
+        self.raw_model.after_backward()  # e.g. clip grad norm
         self.optimizer.step()
         self.scheduler.step()
         self.optimizer.zero_grad()
