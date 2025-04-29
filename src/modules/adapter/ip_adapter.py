@@ -231,20 +231,23 @@ class ResamplerProjector(nn.Module):
         )
 
     def init_weights(self):
-        def _init(module: nn.Module):
+        for name, module in self.layers.named_modules():
             if isinstance(module, nn.Linear):
-                # initialize linear layers
-                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if "to_" in name:  # attention
+                    # initialize linear layers
+                    nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                else:  # feed forward
+                    nn.init.zeros_(module.weight)
+
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+
             elif isinstance(module, nn.LayerNorm):
                 # initialize layer norm
                 if module.weight is not None:
                     nn.init.ones_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
-
-        self.layers.apply(_init)
 
         self.latents.data = (
             torch.randn(1, self.num_ip_tokens, self.cross_attention_dim)
@@ -257,8 +260,8 @@ class ResamplerProjector(nn.Module):
             nn.init.zeros_(self.proj_in.bias)
 
         # out
-        # nn.init.zeros_(self.proj_out.weight)
-        nn.init.normal_(self.proj_out.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(self.proj_out.weight)
+        # nn.init.normal_(self.proj_out.weight, mean=-0.01, std=0.01)
         if self.proj_out.bias is not None:
             nn.init.zeros_(self.proj_out.bias)
         if self.norm_out.weight is not None:
@@ -369,6 +372,7 @@ class IPAdapterManager(AdapterManager):
             # later we will replace "!" with "." in the state dict.
 
         self.module_dict.update(module_dict)
+        self.module_list = adapter_modules  # keep for later initialization
 
     def get_projector(self, attention_dim: int):
         if self.adapter_config.projector_type == "linear":
@@ -418,20 +422,7 @@ class IPAdapterManager(AdapterManager):
 
     def init_weights(self):
         # initialize moduel_dict
-        for name, module in self.module_dict.named_modules():
-            if isinstance(module, nn.Linear):
-                # initialize linear layers
-                # to_v -> zero
-                if "to_v" in name:
-                    nn.init.zeros_(module.weight)
-                else:
-                    # to_k -> random
-                    nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                # nn.init.xavier_uniform_(module.weight)
-                # nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
-            elif isinstance(module, nn.LayerNorm):
-                # initialize layer norm
-                nn.init.ones_(module.weight)
-                nn.init.zeros_(module.bias)
+        for module in self.module_list:
+            # this is must be IPAdapterCrossAttention
+            assert hasattr(module, "init_weights"), "module must have init_weights()"
+            module.init_weights()

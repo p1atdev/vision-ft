@@ -79,6 +79,20 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         self.to_out.eval()
         self.to_out.requires_grad_(False)
 
+    def init_weights(self):
+        # # copy weights from original modules, if they are not quantized
+        # if not hasattr(self.to_k, "quant_type"):
+        #     self.to_k_ip.weight.data.copy_(self.to_k.weight.data)
+        # else:
+        #     # otherwise, init with small values
+        nn.init.zeros_(self.to_k_ip.weight)
+
+        # if not hasattr(self.to_v, "quant_type"):
+        #     self.to_v_ip.weight.data.copy_(self.to_v.weight.data)
+        # else:
+        #     # otherwise, init with small values
+        nn.init.zeros_(self.to_v_ip.weight)
+
     @classmethod
     def from_module(
         cls,
@@ -268,10 +282,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
         else:
             # initialize
             self.manager.module_dict.to_empty(device=torch.device("cpu"))
-            self.manager.init_weights()
+            self.manager.init_weights()  # cross attention adapter
             self.encoder._load_model()
             self.image_proj.to_empty(device=torch.device("cpu"))
-            self.image_proj.init_weights()
+            self.image_proj.init_weights()  # image projector
 
     @classmethod
     def from_checkpoint(
@@ -379,11 +393,11 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 execution_device
             )
             positive_reference_embeddings = self.encode_reference_image(reference_image)
-            negative_reference_embeddings = self.encode_reference_image(
-                torch.zeros_like(reference_image)
-            )
             reference_embeddings = torch.cat(
-                [positive_reference_embeddings, negative_reference_embeddings],
+                [
+                    positive_reference_embeddings,
+                    torch.zeros_like(positive_reference_embeddings),
+                ],
                 dim=0,  # batch
             )
             prompt_embeddings = torch.cat(

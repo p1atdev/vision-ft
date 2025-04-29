@@ -35,6 +35,8 @@ class SDXLModelWithIPAdapterTrainingConfig(SDXLModelWithIPAdapterConfig):
     timestep_sampling: Literal["uniform", "gaussian"] = "uniform"
     timestep_sampling_args: dict = {}
 
+    drop_image_rate: float = 0.15
+
 
 class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
     model: SDXLModelWithIPAdapter
@@ -157,9 +159,15 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
 
             latents = self.model.encode_image(pixel_values)
             timesteps = self.sample_timestep(latents.shape)
+            drop_image = (
+                torch.rand(reference_pixel_values.size(0))
+                < self.model_config.drop_image_rate
+            ).to(reference_pixel_values.device)
 
         # ip adapter inputs
         ip_tokens = self.model.encode_reference_image(reference_pixel_values)
+        # fill with zeros if drop_image is True
+        ip_tokens = torch.where(drop_image, torch.zeros_like(ip_tokens), ip_tokens)
 
         # cat with seq len to pass through the model
         encoder_hidden_states = torch.cat(
