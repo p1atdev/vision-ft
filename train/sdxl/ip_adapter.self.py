@@ -165,9 +165,14 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
             ).to(reference_pixel_values.device)
 
         # ip adapter inputs
-        ip_tokens = self.model.encode_reference_image(reference_pixel_values)
+        ip_tokens: torch.Tensor = self.model.encode_reference_image(
+            reference_pixel_values
+        )
         # fill with zeros if drop_image is True
-        ip_tokens = torch.where(drop_image, torch.zeros_like(ip_tokens), ip_tokens)
+        ip_tokens = ip_tokens.masked_fill(
+            drop_image[:, None, None].expand(*ip_tokens.size()),
+            0.0,
+        )
 
         # cat with seq len to pass through the model
         encoder_hidden_states = torch.cat(

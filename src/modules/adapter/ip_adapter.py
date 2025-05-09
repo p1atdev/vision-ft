@@ -260,8 +260,8 @@ class ResamplerProjector(nn.Module):
             nn.init.zeros_(self.proj_in.bias)
 
         # out
-        nn.init.zeros_(self.proj_out.weight)
-        # nn.init.normal_(self.proj_out.weight, mean=-0.01, std=0.01)
+        # nn.init.zeros_(self.proj_out.weight)
+        nn.init.normal_(self.proj_out.weight, mean=-0.01, std=0.01)
         if self.proj_out.bias is not None:
             nn.init.zeros_(self.proj_out.bias)
         if self.norm_out.weight is not None:
