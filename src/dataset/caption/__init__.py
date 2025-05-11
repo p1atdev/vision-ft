@@ -1,5 +1,5 @@
 from .util import CaptionProcessorMixin, CaptionPassthrough
-from .shuffle import CaptionShuffle
+from .shuffle import CaptionShuffle, CaptionShuffleInGroup
 from .append import CaptionPrefix, CaptionSuffix
 from .drop import CaptionDrop, CaptionTagDrop
 
@@ -8,6 +8,7 @@ CaptionProcessorList = list[
     | CaptionPrefix
     | CaptionSuffix
     | CaptionShuffle
+    | CaptionShuffleInGroup
     | CaptionDrop
     | CaptionTagDrop
 ]
