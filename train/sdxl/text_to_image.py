@@ -21,11 +21,15 @@ from src.modules.peft import get_adapter_parameters
 from src.utils.logging import wandb_image
 
 
+class SDXLForTextToImageTrainingConfig(SDXLConfig):
+    max_token_length: int = 225  # 75 * 3
+
+
 class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
     model: SDXLModel
 
-    model_config: SDXLConfig
-    model_config_class = SDXLConfig
+    model_config: SDXLForTextToImageTrainingConfig
+    model_config_class = SDXLForTextToImageTrainingConfig
 
     def setup_model(self):
         with init_empty_weights():
@@ -94,7 +98,10 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
 
         # 1. Prepare the inputs
         with torch.no_grad():
-            encoder_output = self.model.text_encoder.encode_prompts(caption)
+            encoder_output = self.model.text_encoder.encode_prompts(
+                caption,
+                max_token_length=self.model_config.max_token_length,
+            )
             encoder_hidden_states, pooled_hidden_states = (
                 self.model.prepare_encoder_hidden_states(
                     encoder_output=encoder_output,
@@ -165,6 +172,7 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
                 cfg_scale=cfg_scale,
                 num_inference_steps=num_steps,
                 seed=seed,
+                max_token_length=self.model_config.max_token_length,
             )[0]
 
         self.log(
