@@ -1,5 +1,7 @@
 # Vision model finetuning scripts
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/p1atdev/vision-ft)
+
 WIP
 
 ## Features
