@@ -46,6 +46,7 @@ dev-dependencies = [
     "litserve>=0.2.5",
     "gradio>=5.9.1",
     "seaborn>=0.13.2",
+    "ty>=0.0.1a6",
     "comfyui",
 ]
 no-build-isolation-package = ["flash-attn"]
@@ -85,3 +86,7 @@ comfyui = { git = "https://github.com/p1atdev/ComfyUI", rev = "lib" }
 name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
+
+
+[tool.ty.src]
+root = "./src"
