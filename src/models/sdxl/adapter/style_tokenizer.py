@@ -151,6 +151,7 @@ class TextEncoderWithStyle(TextEncoder):
             )
         else:
             style_embeddings = None
+
         input_embed = self.encode_tokens_with_style_embed(
             module=self.text_encoder_1.text_model.embeddings,
             input_ids=input_ids,
@@ -158,9 +159,15 @@ class TextEncoderWithStyle(TextEncoder):
             style_token_id=self.style_token_id_1,
         )
 
+        #  3.3 prepare causal attention mask
+        causal_attention_mask = _create_4d_causal_attention_mask(
+            input_ids.size(), input_embed.dtype, device=input_embed.device
+        )
+
         # 3. Encode prompts
-        prompt_encodings: torch.Tensor = self.text_encoder_1(
-            input_ids.to(self.text_encoder_1.device),
+        prompt_encodings: torch.Tensor = self.text_encoder_1.text_model.encoder(
+            input_embed,
+            causal_attention_mask=causal_attention_mask,
             output_hidden_states=True,  # to get penultimate layer
         ).hidden_states[-2]  # penultimate layer
 
