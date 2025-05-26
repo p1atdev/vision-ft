@@ -34,8 +34,7 @@ class LinearImageProjector(nn.Module):
 
     def init_weights(self):
         # initialize linear layers
-        # nn.init.zeros_(self.proj.weight)
-        nn.init.uniform_(self.proj.weight, a=-0.01, b=0.01)  # almost zero
+        nn.init.uniform_(self.proj.weight, a=0.0, b=0.02)  # almost zero
         if self.proj.bias is not None:
             nn.init.zeros_(self.proj.bias)
 
@@ -85,7 +84,6 @@ class MLPImageProjector(nn.Module):
         if self.mlp[0].bias is not None:
             nn.init.zeros_(self.mlp[0].bias)
         nn.init.normal_(self.mlp[2].weight, mean=0.0, std=0.02)
-        # nn.init.uniform_(self.mlp[2].weight, a=-0.01, b=0.01)  # almost zero
         if self.mlp[2].bias is not None:
             nn.init.zeros_(self.mlp[2].bias)
 
@@ -233,11 +231,7 @@ class ResamplerProjector(nn.Module):
     def init_weights(self):
         for name, module in self.layers.named_modules():
             if isinstance(module, nn.Linear):
-                if "to_" in name:  # attention
-                    # initialize linear layers
-                    nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                else:  # feed forward
-                    nn.init.zeros_(module.weight)
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
@@ -260,8 +254,7 @@ class ResamplerProjector(nn.Module):
             nn.init.zeros_(self.proj_in.bias)
 
         # out
-        # nn.init.zeros_(self.proj_out.weight)
-        nn.init.normal_(self.proj_out.weight, mean=-0.01, std=0.01)
+        nn.init.normal_(self.proj_out.weight, mean=0.0, std=0.02)
         if self.proj_out.bias is not None:
             nn.init.zeros_(self.proj_out.bias)
         if self.norm_out.weight is not None:
