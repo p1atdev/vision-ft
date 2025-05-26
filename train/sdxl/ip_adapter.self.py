@@ -29,13 +29,12 @@ from src.utils.logging import wandb_image
 
 class SDXLModelWithIPAdapterTrainingConfig(SDXLModelWithIPAdapterConfig):
     max_token_length: int = 225  # 75 * 3
+    drop_image_rate: float = 0.15
 
     freeze_vision_encoder: bool = True
 
     timestep_sampling: Literal["uniform", "gaussian"] = "uniform"
     timestep_sampling_args: dict = {}
-
-    drop_image_rate: float = 0.15
 
 
 class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
@@ -160,19 +159,18 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
             latents = self.model.encode_image(pixel_values)
             timesteps = self.sample_timestep(latents.shape)
             drop_image = (
-                torch.rand(reference_pixel_values.size(0))
+                torch.rand(
+                    reference_pixel_values.size(0), device=self.accelerator.device
+                )
                 < self.model_config.drop_image_rate
-            ).to(reference_pixel_values.device)
+            )
 
         # ip adapter inputs
         ip_tokens: torch.Tensor = self.model.encode_reference_image(
             reference_pixel_values
         )
-        # fill with zeros if drop_image is True
-        ip_tokens = ip_tokens.masked_fill(
-            drop_image[:, None, None].expand(*ip_tokens.size()),
-            0.0,
-        )
+        # drop ip tokens randomly for cfg
+        ip_tokens[drop_image] = 0
 
         # cat with seq len to pass through the model
         encoder_hidden_states = torch.cat(
