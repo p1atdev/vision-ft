@@ -48,7 +48,7 @@ class ImageCaptionPair(BaseModel):
         with open(self.metadata, "r") as f:
             metadata = json.load(f)
 
-        return metadata["tag_string"]
+        return metadata["tag_string"].replace(" ", ", ").replace("_", " ")
 
 
 class RandomCropOutput(NamedTuple):
