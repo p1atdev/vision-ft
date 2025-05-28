@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -7,6 +7,7 @@ from torch.utils.checkpoint import checkpoint
 
 
 from .util import Adapter, AdapterManager
+from ..peft import PeftConfigUnion
 from ...models.auto import AutoModelConfig, TimmModelConfig
 from ..attention import AttentionImplementation, scaled_dot_product_attention
 from ..norm import FP32LayerNorm
@@ -306,6 +307,8 @@ class IPAdapterConfig(BaseModel):
     image_std: list[float] = [0.5, 0.5, 0.5]
     feature_dim: int = 768
 
+    peft: PeftConfigUnion | None = None
+
 
 # MARK: IPAdapterManager
 class IPAdapterManager(AdapterManager):
@@ -321,7 +324,7 @@ class IPAdapterManager(AdapterManager):
     def apply_adapter(self, model: nn.Module):
         # find target modules
 
-        adapter_modules = []
+        adapter_modules: list[Adapter] = []
 
         # recursive
         def _find_target_module(
@@ -339,7 +342,7 @@ class IPAdapterManager(AdapterManager):
                     # replace target module with adapter
                     adapter = self.adapter_class.from_module(
                         module=layer,
-                        **self.adapter_config.model_dump(),
+                        config=self.adapter_config,
                     )
                     setattr(model, name, adapter)
                     del layer
@@ -359,8 +362,10 @@ class IPAdapterManager(AdapterManager):
         # idx: 0, <1>, 2, <3>, 4, <5>, 6, <7>, 8, <9>, ....
         for i, module in enumerate(adapter_modules):
             idx = i * 2 + 1
-            module_dict[f"ip_adapter!{idx}!to_k_ip"] = module.to_k_ip
-            module_dict[f"ip_adapter!{idx}!to_v_ip"] = module.to_v_ip
+            adapter_module_dict = module.get_module_dict()
+            for key, layer in adapter_module_dict.items():
+                module_dict[f"ip_adapter!{idx}!{key}"] = layer
+                # e.g. "ip_adapter!1!to_q_ip", "ip_adapter!1!to_k_ip", "ip_adapter!1!to_v_ip"
             # key can't contain ".", so we use "!" here.
             # later we will replace "!" with "." in the state dict.
 

@@ -19,7 +19,7 @@ from ..pipeline import SDXLModel
 from ..config import SDXLConfig
 from ...auto import AutoImageEncoder
 from ....dataset.transform import PaddedResize
-from ....modules.peft import PeftConfigUnion
+from ....modules.peft import PeftConfigUnion, LoRAConfig
 from ....modules.peft.functional import _get_peft_linear
 
 
@@ -95,15 +95,17 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             # otherwise, init with small values
             nn.init.normal_(self.to_v_ip.weight, mean=-0.01, std=0.01)
 
+    def get_module_dict(self) -> dict[str, nn.Module]:
+        return {
+            "to_k_ip": self.to_k_ip,
+            "to_v_ip": self.to_v_ip,
+        }
+
     @classmethod
     def from_module(
         cls,
         module: nn.Module,  # should be SDXL's CrossAttention
-        ip_scale: float = 1.0,
-        num_ip_tokens: int = 4,
-        dtype: str = "float32",
-        *args,
-        **kwargs,
+        config: IPAdapterConfig,
     ) -> "IPAdapterCrossAttentionSDXL":
         new_module = cls(
             cross_attention_dim=module.to_k.in_features,
@@ -113,14 +115,14 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             to_k=module.to_k,
             to_v=module.to_v,
             to_out=module.to_out,
-            ip_scale=ip_scale,
-            num_ip_tokens=num_ip_tokens,
+            ip_scale=config.ip_scale,
+            num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
         )
         new_module.freeze_original_modules()
 
-        new_module.to_k_ip.to(dtype=str_to_dtype(dtype))
-        new_module.to_v_ip.to(dtype=str_to_dtype(dtype))
+        new_module.to_k_ip.to(dtype=str_to_dtype(config.dtype))
+        new_module.to_v_ip.to(dtype=str_to_dtype(config.dtype))
 
         return new_module
 
@@ -216,7 +218,6 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         to_v: nn.Linear,
         to_out: nn.Module,
         peft_config: PeftConfigUnion,
-        peft_dtype: torch.dtype,
         ip_scale: float = 1.0,
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
@@ -250,34 +251,41 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         self.to_out = to_out
 
         self.peft_config = peft_config
-        self.peft_dtype = peft_dtype
 
+        self.to_q_ip = None  # setup later
         self.to_k_ip = None  # setup later
-        self.to_v_ip = None
+        self.to_v_ip = None  # setup later
 
     def init_weights(self):
+        self.to_q_ip = _get_peft_linear(
+            self.to_q,
+            config=self.peft_config,
+        )
         self.to_k_ip = _get_peft_linear(
             self.to_k,
             config=self.peft_config,
-            dtype=self.peft_dtype,
         )
         self.to_v_ip = _get_peft_linear(
             self.to_v,
             config=self.peft_config,
-            dtype=self.peft_dtype,
         )
+
+    def get_module_dict(self) -> dict[str, nn.Module]:
+        return {
+            "to_q_ip": self.to_q_ip,
+            "to_k_ip": self.to_k_ip,
+            "to_v_ip": self.to_v_ip,
+        }
 
     @classmethod
     def from_module(
         cls,
         module: nn.Module,  # should be SDXL's CrossAttention
-        peft_config: PeftConfigUnion,
-        ip_scale: float = 1.0,
-        num_ip_tokens: int = 4,
-        dtype: str = "float32",
-        *args,
-        **kwargs,
+        config: IPAdapterConfig,
     ) -> "IPAdapterCrossAttentionSDXL":
+        peft = config.peft
+        assert peft is not None, "IPAdapterCrossAttentionPeftSDXL requires peft config."
+
         new_module = cls(
             cross_attention_dim=module.to_k.in_features,
             num_heads=module.num_heads,
@@ -286,24 +294,25 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             to_k=module.to_k,
             to_v=module.to_v,
             to_out=module.to_out,
-            peft_config=peft_config,
-            peft_dtype=str_to_dtype(dtype),
-            ip_scale=ip_scale,
-            num_ip_tokens=num_ip_tokens,
+            peft_config=peft,
+            ip_scale=config.ip_scale,
+            num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
         )
         new_module.freeze_original_modules()
 
-        # new_module.to_k_ip = _get_peft_linear(
-        #     new_module.to_k,
-        #     config=peft_config,
-        #     dtype=str_to_dtype(dtype),
-        # )
-        # new_module.to_v_ip = _get_peft_linear(
-        #     new_module.to_v,
-        #     config=peft_config,
-        #     dtype=str_to_dtype(dtype),
-        # )
+        new_module.to_q_ip = _get_peft_linear(
+            new_module.to_q,
+            config=peft,
+        )
+        new_module.to_k_ip = _get_peft_linear(
+            new_module.to_k,
+            config=peft,
+        )
+        new_module.to_v_ip = _get_peft_linear(
+            new_module.to_v,
+            config=peft,
+        )
 
         return new_module
 
@@ -325,7 +334,11 @@ class SDXLModelWithIPAdapter(SDXLModel):
 
         # 3. setup adapter
         self.manager = IPAdapterManager(
-            adapter_class=IPAdapterCrossAttentionSDXL,
+            adapter_class=(
+                IPAdapterCrossAttentionSDXL
+                if self.config.adapter.peft is None
+                else IPAdapterCrossAttentionPeftSDXL
+            ),
             adapter_config=self.config.adapter,
         )
         self.manager.apply_adapter(self)

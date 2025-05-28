@@ -5,6 +5,7 @@ from typing import Literal
 
 from .config import PeftConfigMixin
 from .util import PeftLayer
+from ...utils.dtype import str_to_dtype
 
 
 class LoRAConfig(PeftConfigMixin):
@@ -28,12 +29,11 @@ class LoRALinear(PeftLayer):
         self,
         config: LoRAConfig,
         original_linear: nn.Linear,
-        dropout: float = 0.0,
-        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
 
         self.config = config
+        dtype = str_to_dtype(config.dtype)
 
         # get original parameters
         in_features = original_linear.in_features
@@ -42,7 +42,9 @@ class LoRALinear(PeftLayer):
         # lora modules
         self.lora_down = nn.Linear(in_features, config.rank, bias=False, dtype=dtype)
         self.lora_up = nn.Linear(config.rank, out_features, bias=False, dtype=dtype)
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.dropout = (
+            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
+        )
         self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
         self.rank = config.rank
         if config.use_bias:
@@ -130,12 +132,11 @@ class LoRAConv2d(PeftLayer):
         self,
         config: LoRAConfig,
         original_conv2d: nn.Conv2d,
-        dropout: float = 0.0,
-        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
 
         self.config = config
+        dtype = str_to_dtype(config.dtype)
 
         # get original parameters
         in_channels = original_conv2d.in_channels
@@ -162,7 +163,9 @@ class LoRAConv2d(PeftLayer):
             bias=False,
             dtype=dtype,
         )
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.dropout = (
+            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
+        )
         self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
         self.rank = config.rank
         if config.use_bias:

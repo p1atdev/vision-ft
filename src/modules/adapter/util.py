@@ -24,6 +24,13 @@ class Adapter(nn.Module, ABC):
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
 
+    @abstractmethod
+    def get_module_dict(self) -> dict[str, nn.Module]:
+        """
+        Returns a dictionary of modules that this adapter manages.
+        """
+        raise NotImplementedError("This method should be overridden by subclasses.")
+
 
 class AdapterManager(nn.Module, ABC):
     module_dict: nn.ModuleDict

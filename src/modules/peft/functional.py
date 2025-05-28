@@ -9,14 +9,12 @@ from .config import PeftConfigMixin, PEFT_TYPE
 from .util import PeftLayer
 from .lora import LoRAConfig, LoRALinear, LoRAConv2d
 from ...utils.tensor import remove_orig_mod_prefix
-from ...utils.dtype import str_to_dtype
 from ...utils.state_dict import get_target_keys, RegexMatch
 
 
 def _get_peft_linear(
     module: nn.Linear,
     config: PeftConfigMixin,
-    dtype: torch.dtype | None = None,
 ) -> nn.Module:
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
@@ -26,8 +24,6 @@ def _get_peft_linear(
         return LoRALinear(
             config=config,
             original_linear=module,
-            dropout=config.dropout,
-            dtype=dtype,
         )
 
     else:
@@ -37,7 +33,6 @@ def _get_peft_linear(
 def _get_peft_conv2d(
     module: nn.Conv2d,
     config: PeftConfigMixin,
-    dtype: torch.dtype | None = None,
 ) -> nn.Module:
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
@@ -47,8 +42,6 @@ def _get_peft_conv2d(
         return LoRAConv2d(
             config=config,
             original_conv2d=module,
-            dropout=config.dropout,
-            dtype=dtype,
         )
 
     else:
@@ -73,9 +66,7 @@ def _replace_to_peft_layer(
                 continue
 
             # replace with peft module
-            peft_module = _get_peft_linear(
-                layer, config, dtype=str_to_dtype(config.dtype)
-            )
+            peft_module = _get_peft_linear(layer, config)
             setattr(model, name, peft_module)
 
         elif isinstance(layer, nn.Conv2d):
@@ -83,9 +74,7 @@ def _replace_to_peft_layer(
                 continue
 
             # replace with peft module
-            peft_module = _get_peft_conv2d(
-                layer, config, dtype=str_to_dtype(config.dtype)
-            )
+            peft_module = _get_peft_conv2d(layer, config)
             setattr(model, name, peft_module)
         else:
             _replace_to_peft_layer(
