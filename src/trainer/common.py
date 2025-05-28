@@ -367,10 +367,13 @@ class Trainer:
                     self.raw_model
                 )
                 state_dict = unwrapped_model.get_state_dict_to_save()
+                metadata = unwrapped_model.get_metadata_to_save()
                 self.print("Saving model...")
 
                 for callback in self.saving_callbacks:
-                    callback.save_state_dict(state_dict, epoch, steps)
+                    callback.save_state_dict(
+                        state_dict, epoch, steps, metadata=metadata
+                    )
 
                 self.print("Model saved.")
 

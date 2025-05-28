@@ -278,6 +278,18 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         state_dict = {remove_orig_mod_prefix(k): v for k, v in state_dict.items()}
         return state_dict
 
+    def get_metadata_to_save(self) -> dict[str, str]:
+        if self.model_config.adapter.projector_type == "resampler":
+            return {
+                "num_heads": str(
+                    self.model_config.adapter.projector_args.get(
+                        "num_heads",
+                        8,
+                    )
+                ),
+            }
+        return {}
+
     def before_setup_model(self):
         pass
 

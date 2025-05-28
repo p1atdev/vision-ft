@@ -123,6 +123,12 @@ class ModelForTraining(ABC, nn.Module):
     ) -> dict[str, torch.Tensor]:
         return self.model.state_dict()
 
+    def get_metadata_to_save(
+        self,
+    ) -> dict[str, str]:
+        # additional metadata to save with weights into the safetensors
+        return {}
+
     def before_save_model(self):
         pass
 

@@ -7,7 +7,7 @@ from torch.utils.checkpoint import checkpoint
 
 
 from .util import Adapter, AdapterManager
-from ..peft import PeftConfigUnion
+from ..peft import PeftConfigUnion, get_adapter_parameters
 from ...models.auto import AutoModelConfig, TimmModelConfig
 from ..attention import AttentionImplementation, scaled_dot_product_attention
 from ..norm import FP32LayerNorm
@@ -364,7 +364,7 @@ class IPAdapterManager(AdapterManager):
             idx = i * 2 + 1
             adapter_module_dict = module.get_module_dict()
             for key, layer in adapter_module_dict.items():
-                module_dict[f"ip_adapter!{idx}!{key}"] = layer
+                module_dict[f"ip_adapter.{idx}.{key}".replace(".", "!")] = layer
                 # e.g. "ip_adapter!1!to_q_ip", "ip_adapter!1!to_k_ip", "ip_adapter!1!to_v_ip"
             # key can't contain ".", so we use "!" here.
             # later we will replace "!" with "." in the state dict.
@@ -412,8 +412,13 @@ class IPAdapterManager(AdapterManager):
         self.module_dict.requires_grad_(trainable)
 
     def get_state_dict(self):
-        state_dict = super().get_state_dict()
-        # replace "_" with "." in the state dict keys
+        # if peft is enabled, get adapter parameters
+        if self.adapter_config.peft is not None:
+            state_dict = get_adapter_parameters(self.module_dict)
+        else:
+            state_dict = super().get_state_dict()
+
+        # replace "!" with "." in the state dict keys
         state_dict = {k.replace("!", "."): v for k, v in state_dict.items()}
 
         return state_dict

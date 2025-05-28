@@ -19,8 +19,8 @@ from ..pipeline import SDXLModel
 from ..config import SDXLConfig
 from ...auto import AutoImageEncoder
 from ....dataset.transform import PaddedResize
-from ....modules.peft import PeftConfigUnion, LoRAConfig
-from ....modules.peft.functional import _get_peft_linear
+from ....modules.peft import PeftConfigUnion
+from ....modules.peft.functional import _get_peft_linear, extract_peft_layers
 
 
 # models/sdxl/denoiser
@@ -271,11 +271,7 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         )
 
     def get_module_dict(self) -> dict[str, nn.Module]:
-        return {
-            "to_q_ip": self.to_q_ip,
-            "to_k_ip": self.to_k_ip,
-            "to_v_ip": self.to_v_ip,
-        }
+        return extract_peft_layers(self)
 
     @classmethod
     def from_module(
