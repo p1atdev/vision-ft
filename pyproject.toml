@@ -46,8 +46,8 @@ dev-dependencies = [
     "litserve>=0.2.5",
     "gradio>=5.9.1",
     "seaborn>=0.13.2",
-    "ty>=0.0.1a6",
     "comfyui",
+    "ty>=0.0.1a7",
 ]
 no-build-isolation-package = ["flash-attn"]
 
