@@ -77,16 +77,19 @@ def test_apply_ip_adapter_peft():
         assert f"ip_adapter!{id}!to_q_ip" in manager.module_dict
         assert f"ip_adapter!{id}!to_k_ip" in manager.module_dict
         assert f"ip_adapter!{id}!to_v_ip" in manager.module_dict
+
         assert f"ip_adapter.{id}.to_q_ip.lora_up.weight" in state_dict
         assert f"ip_adapter.{id}.to_q_ip.lora_down.weight" in state_dict
         assert f"ip_adapter.{id}.to_q_ip.alpha" in state_dict
+
         assert f"ip_adapter.{id}.to_k_ip.lora_up.weight" in state_dict
         assert f"ip_adapter.{id}.to_v_ip.lora_up.weight" in state_dict
 
         # not to have the original weights
         assert f"ip_adapter.{id}.to_q_ip.weight" not in state_dict
-        assert f"ip_adapter.{id}.to_k_ip.weight" not in state_dict
-        assert f"ip_adapter.{id}.to_v_ip.weight" not in state_dict
+        assert f"ip_adapter.{id}.to_q_ip.linear.weight" not in state_dict
+        assert f"ip_adapter.{id}.to_k_ip.linear.weight" not in state_dict
+        assert f"ip_adapter.{id}.to_v_ip.linear.weight" not in state_dict
 
 
 def test_sdxl_ip_adapter():
@@ -134,13 +137,16 @@ def test_sdxl_ip_adapter_peft():
         assert f"ip_adapter!{id}!to_q_ip" in model.manager.module_dict
         assert f"ip_adapter!{id}!to_k_ip" in model.manager.module_dict
         assert f"ip_adapter!{id}!to_v_ip" in model.manager.module_dict
+
         assert f"ip_adapter.{id}.to_q_ip.lora_up.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.to_q_ip.lora_down.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.to_q_ip.alpha" in adapter_state_dict
+
         assert f"ip_adapter.{id}.to_k_ip.lora_up.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.to_v_ip.lora_up.weight" in adapter_state_dict
 
         # not to have the original weights
         assert f"ip_adapter.{id}.to_q_ip.weight" not in adapter_state_dict
-        assert f"ip_adapter.{id}.to_k_ip.weight" not in adapter_state_dict
-        assert f"ip_adapter.{id}.to_v_ip.weight" not in adapter_state_dict
+        assert f"ip_adapter.{id}.to_q_ip.linear.weight" not in adapter_state_dict
+        assert f"ip_adapter.{id}.to_k_ip.linear.weight" not in adapter_state_dict
+        assert f"ip_adapter.{id}.to_v_ip.linear.weight" not in adapter_state_dict

@@ -405,11 +405,16 @@ class IPAdapterManager(AdapterManager):
             )
 
     def set_adapter_trainable(self, trainable: bool = True):
-        if trainable:
-            self.module_dict.train()
-        else:
-            self.module_dict.eval()
-        self.module_dict.requires_grad_(trainable)
+        # to avoid wrong training state and requires_grad settings,
+        # we have to call train/eval and requires_grad_ directly on each module.
+        # otherwise, torch does not call the overridden train/eval/requires_grad_ methods,
+        # and that causes wrong trainable flags during training.
+        for module in self.module_dict.children():
+            if trainable:
+                module.train()
+            else:
+                module.eval()
+            module.requires_grad_(trainable)
 
     def get_state_dict(self):
         # if peft is enabled, get adapter parameters

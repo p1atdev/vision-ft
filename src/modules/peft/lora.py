@@ -87,6 +87,20 @@ class LoRALinear(PeftLayer):
 
         return original_output + lora_output
 
+    def train(self, mode: bool = True) -> "LoRALinear":
+        super().train(mode)
+        # do not train original linear layer
+        self.linear.train(False)
+
+        return self
+
+    def requires_grad_(self, requires_grad: bool = True) -> "LoRALinear":
+        super().requires_grad_(requires_grad)
+        # do not train original linear layer
+        self.linear.weight.requires_grad_(False)
+
+        return self
+
     @classmethod
     def from_weights(
         cls,
@@ -207,6 +221,20 @@ class LoRAConv2d(PeftLayer):
         lora_output = lora_up * (self.alpha / self.rank)
 
         return original_output + lora_output
+
+    def train(self, mode: bool = True) -> "LoRAConv2d":
+        super().train(mode)
+        # do not train original convolution layer
+        self.conv2d.train(False)
+
+        return self
+
+    def requires_grad_(self, requires_grad: bool = True) -> "LoRAConv2d":
+        super().requires_grad_(requires_grad)
+        # do not train original convolution layer
+        self.conv2d.requires_grad_(False)
+
+        return self
 
     @classmethod
     def from_weights(

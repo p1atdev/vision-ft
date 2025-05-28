@@ -20,6 +20,7 @@ from ..config import SDXLConfig
 from ...auto import AutoImageEncoder
 from ....dataset.transform import PaddedResize
 from ....modules.peft import PeftConfigUnion
+from ....modules.peft.util import PeftLayer
 from ....modules.peft.functional import _get_peft_linear, extract_peft_layers
 
 
@@ -208,6 +209,10 @@ class IPAdapterCrossAttentionSDXL(Adapter):
 
 
 class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
+    to_q_ip: PeftLayer
+    to_k_ip: PeftLayer
+    to_v_ip: PeftLayer
+
     def __init__(
         self,
         cross_attention_dim: int,
@@ -252,9 +257,9 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
 
         self.peft_config = peft_config
 
-        self.to_q_ip = None  # setup later
-        self.to_k_ip = None  # setup later
-        self.to_v_ip = None  # setup later
+        # self.to_q_ip = # setup later
+        # self.to_k_ip = # setup later
+        # self.to_v_ip = # setup later
 
     def init_weights(self):
         self.to_q_ip = _get_peft_linear(
@@ -311,6 +316,45 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         )
 
         return new_module
+
+    def forward(
+        self,
+        latents: torch.Tensor,
+        context: torch.Tensor,  # encoder hidden states + ip tokens
+        mask: torch.Tensor | None = None,
+    ):
+        # 1. separate text encoder_hiden_states and ip_tokens
+        text_hidden_states = context[:, : -self.num_ip_tokens, :]
+        ip_tokens = context[:, -self.num_ip_tokens :, :]
+
+        # 2. attention latents and text features
+        query = self.to_q(latents)
+        text_key = self.to_k(text_hidden_states)
+        text_vey = self.to_v(text_hidden_states)
+
+        hidden_states = self.cross_attention(
+            query=query,
+            key=text_key,
+            value=text_vey,
+            mask=mask,
+        )
+
+        # 3. attention ip tokens
+        ip_query = self.to_q_ip(latents)  # peft type layer uses ip-query
+        ip_key = self.to_k_ip(ip_tokens)
+        ip_value = self.to_v_ip(ip_tokens)
+
+        ip_hidden_states = self.cross_attention(
+            query=ip_query,
+            key=ip_key,
+            value=ip_value,
+            mask=None,
+        )
+        hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+
+        hidden_states = self.to_out(hidden_states)
+
+        return hidden_states
 
 
 class SDXLModelWithIPAdapterConfig(SDXLConfig):

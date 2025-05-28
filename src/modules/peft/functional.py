@@ -15,7 +15,7 @@ from ...utils.state_dict import get_target_keys, RegexMatch
 def _get_peft_linear(
     module: nn.Linear,
     config: PeftConfigMixin,
-) -> nn.Module:
+) -> PeftLayer:
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
 
@@ -117,22 +117,30 @@ def get_adapter_parameters(model: nn.Module) -> dict[str, torch.Tensor]:
     return adapter_params
 
 
-def extract_peft_layers(module: nn.Module) -> dict[str, PeftLayer]:
-    """
-    Extracts all PEFT layers from the given module and returns them in a dictionary.
+def extract_peft_internal_modules(
+    model: nn.Module,
+) -> dict[str, nn.Module]:
+    peft_modules = {}
 
-    Args:
-        module (nn.Module): The PyTorch module from which to extract PEFT layers.
+    for name, module in model.named_modules():
+        if (param_names := getattr(module, "adapter_param_names", None)) is not None:
+            for param_name in param_names:
+                if (_m := getattr(module, param_name, None)) and isinstance(
+                    _m, nn.Module
+                ):
+                    peft_modules[f"{name}.{param_name}"] = getattr(module, param_name)
 
-    Returns:
-        dict[str, PeftLayer]: A dictionary where keys are the names of the PEFT layers
-                              and values are the corresponding PeftLayer instances.
-    """
+    return peft_modules
+
+
+def extract_peft_layers(
+    model: nn.Module,
+) -> dict[str, PeftLayer]:
     peft_layers = {}
 
-    for name, layer in module.named_modules():
-        if isinstance(layer, PeftLayer):
-            peft_layers[name] = layer
+    for name, module in model.named_modules():
+        if isinstance(module, PeftLayer):
+            peft_layers[name] = module
 
     return peft_layers
 
