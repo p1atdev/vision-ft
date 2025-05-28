@@ -117,6 +117,26 @@ def get_adapter_parameters(model: nn.Module) -> dict[str, torch.Tensor]:
     return adapter_params
 
 
+def extract_peft_layers(module: nn.Module) -> dict[str, PeftLayer]:
+    """
+    Extracts all PEFT layers from the given module and returns them in a dictionary.
+
+    Args:
+        module (nn.Module): The PyTorch module from which to extract PEFT layers.
+
+    Returns:
+        dict[str, PeftLayer]: A dictionary where keys are the names of the PEFT layers
+                              and values are the corresponding PeftLayer instances.
+    """
+    peft_layers = {}
+
+    for name, layer in module.named_modules():
+        if isinstance(layer, PeftLayer):
+            peft_layers[name] = layer
+
+    return peft_layers
+
+
 def detect_peft_method(state_dict: dict[str, torch.Tensor]) -> PEFT_TYPE:
     if any(name.endswith(".lora_up.weight") for name in state_dict.keys()):
         return "lora"
