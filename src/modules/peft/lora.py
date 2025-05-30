@@ -45,7 +45,10 @@ class LoRALinear(PeftLayer):
         self.dropout = (
             nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
         )
-        self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
+        self.alpha = nn.Parameter(
+            torch.tensor(config.alpha, dtype=dtype),
+            requires_grad=False,
+        )
         self.rank = config.rank
         if config.use_bias:
             self.lora_up.bias = nn.Parameter(torch.zeros(out_features, dtype=dtype))
@@ -60,15 +63,28 @@ class LoRALinear(PeftLayer):
         if self.linear.bias is not None:
             self.linear.bias.requires_grad_(False)
 
-        # freeze LoRA alpha
-        self.alpha.requires_grad_(False)
-
         self.init_weights()
 
     def init_weights(self) -> None:
+        self.lora_down.to_empty(device=self.linear.weight.device)
+        self.lora_up.to_empty(device=self.linear.weight.device)
+        self.dropout.to_empty(device=self.linear.weight.device)
+
         # following: https://github.com/pytorch/torchtune/blob/aa8f365f91a69aa36aaea14cf6f03ccd45310bb6/torchtune/modules/peft/lora.py#L102-L106
         nn.init.kaiming_uniform_(self.lora_down.weight)
         nn.init.zeros_(self.lora_up.weight)
+        if self.lora_up.bias is not None:
+            nn.init.zeros_(self.lora_up.bias)
+
+        self.alpha = nn.Parameter(
+            torch.tensor(self.config.alpha, dtype=self.lora_down.weight.dtype),
+            requires_grad=False,
+        )
+        self.dropout = (
+            nn.Dropout(self.config.dropout)
+            if self.config.dropout > 0
+            else nn.Identity()
+        )
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
@@ -88,14 +104,18 @@ class LoRALinear(PeftLayer):
         return original_output + lora_output
 
     def train(self, mode: bool = True) -> "LoRALinear":
-        super().train(mode)
+        self.lora_down.train(mode)
+        self.lora_up.train(mode)
+
         # do not train original linear layer
         self.linear.train(False)
 
         return self
 
     def requires_grad_(self, requires_grad: bool = True) -> "LoRALinear":
-        super().requires_grad_(requires_grad)
+        self.lora_down.requires_grad_(requires_grad)
+        self.lora_up.requires_grad_(requires_grad)
+
         # do not train original linear layer
         self.linear.weight.requires_grad_(False)
 

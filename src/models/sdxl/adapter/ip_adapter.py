@@ -42,6 +42,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         ip_scale: float = 1.0,
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
+        skip_zero_tokens: bool = False,  # skip ip calculation if ip tokens are all zeros
     ):
         super().__init__()
 
@@ -53,6 +54,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         self.ip_scale = ip_scale
         self.num_ip_tokens = num_ip_tokens
         self.attn_implementation: AttentionImplementation = attn_implementation
+        self.skip_zero_tokens = skip_zero_tokens
 
         # original modules
         self.to_q = to_q  # maybe nn.Linear, but perhaps BnbLinear4bit etc.
@@ -83,6 +85,9 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         self.to_out.requires_grad_(False)
 
     def init_weights(self):
+        self.to_k_ip.to_empty(device=self.to_k.weight.device)
+        self.to_v_ip.to_empty(device=self.to_v.weight.device)
+
         # copy weights from original modules, if they are not quantized
         if not hasattr(self.to_k, "quant_type"):
             self.to_k_ip.weight.data.copy_(self.to_k.weight.data)
@@ -119,6 +124,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             ip_scale=config.ip_scale,
             num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
+            skip_zero_tokens=config.skip_zero_tokens,
         )
         new_module.freeze_original_modules()
 
@@ -191,17 +197,18 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             mask=mask,
         )
 
-        # 3. attention ip tokens
-        ip_key = self.to_k_ip(ip_tokens)
-        ip_value = self.to_v_ip(ip_tokens)
+        if not (self.skip_zero_tokens and torch.all(ip_tokens == 0)):
+            # 3. attention ip tokens
+            ip_key = self.to_k_ip(ip_tokens)
+            ip_value = self.to_v_ip(ip_tokens)
 
-        ip_hidden_states = self.cross_attention(
-            query=query,
-            key=ip_key,
-            value=ip_value,
-            mask=None,
-        )
-        hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+            ip_hidden_states = self.cross_attention(
+                query=query,
+                key=ip_key,
+                value=ip_value,
+                mask=None,
+            )
+            hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
         hidden_states = self.to_out(hidden_states)
 
@@ -226,6 +233,7 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         ip_scale: float = 1.0,
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
+        skip_zero_tokens: bool = False,
     ):
         super().__init__(
             cross_attention_dim,
@@ -238,6 +246,7 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             ip_scale,
             num_ip_tokens,
             attn_implementation,
+            skip_zero_tokens=skip_zero_tokens,
         )
 
         self.cross_attention_dim = cross_attention_dim
@@ -262,18 +271,9 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         # self.to_v_ip = # setup later
 
     def init_weights(self):
-        self.to_q_ip = _get_peft_linear(
-            self.to_q,
-            config=self.peft_config,
-        )
-        self.to_k_ip = _get_peft_linear(
-            self.to_k,
-            config=self.peft_config,
-        )
-        self.to_v_ip = _get_peft_linear(
-            self.to_v,
-            config=self.peft_config,
-        )
+        self.to_q_ip.init_weights()
+        self.to_k_ip.init_weights()
+        self.to_v_ip.init_weights()
 
     def get_module_dict(self) -> dict[str, nn.Module]:
         return extract_peft_layers(self)
@@ -299,6 +299,7 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             ip_scale=config.ip_scale,
             num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
+            skip_zero_tokens=config.skip_zero_tokens,
         )
         new_module.freeze_original_modules()
 
@@ -339,18 +340,19 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             mask=mask,
         )
 
-        # 3. attention ip tokens
-        ip_query = self.to_q_ip(latents)  # peft type layer uses ip-query
-        ip_key = self.to_k_ip(ip_tokens)
-        ip_value = self.to_v_ip(ip_tokens)
+        if not (self.skip_zero_tokens and torch.all(ip_tokens == 0)):
+            # 3. attention ip tokens
+            ip_query = self.to_q_ip(latents)  # peft type layer uses ip-query
+            ip_key = self.to_k_ip(ip_tokens)
+            ip_value = self.to_v_ip(ip_tokens)
 
-        ip_hidden_states = self.cross_attention(
-            query=ip_query,
-            key=ip_key,
-            value=ip_value,
-            mask=None,
-        )
-        hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+            ip_hidden_states = self.cross_attention(
+                query=ip_query,
+                key=ip_key,
+                value=ip_value,
+                mask=None,
+            )
+            hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
         hidden_states = self.to_out(hidden_states)
 
@@ -381,7 +383,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
             ),
             adapter_config=self.config.adapter,
         )
-        self.manager.apply_adapter(self)
+
         # 4. setup projector
         self.image_proj = self.manager.get_projector(
             attention_dim=self.config.denoiser.context_dim,
@@ -414,6 +416,9 @@ class SDXLModelWithIPAdapter(SDXLModel):
         self.encoder.eval()
         self.encoder.requires_grad_(False)
 
+    def init_adapter(self):
+        self.manager.apply_adapter(self)
+
     @classmethod
     def from_config(
         cls, config: SDXLModelWithIPAdapterConfig
@@ -425,6 +430,9 @@ class SDXLModelWithIPAdapter(SDXLModel):
 
         # freeze base model
         self.freeze_base_model()
+
+        # re-initialize adapter after loading base model
+        self.init_adapter()
 
         # load adapter weights
         if checkpoint_path := self.config.adapter.checkpoint_weight:
@@ -439,8 +447,8 @@ class SDXLModelWithIPAdapter(SDXLModel):
             )
         else:
             # initialize
-            self.manager.module_dict.to_empty(device=torch.device("cpu"))
-            self.manager.init_weights()  # cross attention adapter
+            # init adapter weights, i.e. copy original weights and initialize ip weights
+            self.manager.init_weights()
             self.encoder._load_model()
             self.image_proj.to_empty(device=torch.device("cpu"))
             self.image_proj.init_weights()  # image projector
@@ -565,6 +573,17 @@ class SDXLModelWithIPAdapter(SDXLModel):
             if do_offloading:
                 self.image_proj.to("cpu")
                 torch.cuda.empty_cache()
+        else:
+            # create zero embeddings
+            num_prompts, _seq_len, dim = prompt_embeddings.size()
+            reference_embeddings = torch.zeros(
+                (num_prompts, self.manager.adapter_config.num_ip_tokens, dim),
+                device=execution_device,
+            )
+            prompt_embeddings = torch.cat(
+                [prompt_embeddings, reference_embeddings],
+                dim=1,  # seq_len
+            )
 
         # 3. Prepare latents, etc.
         if do_offloading:

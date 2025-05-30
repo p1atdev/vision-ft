@@ -78,9 +78,9 @@ def test_apply_ip_adapter_peft():
         assert f"ip_adapter!{id}!to_k_ip" in manager.module_dict
         assert f"ip_adapter!{id}!to_v_ip" in manager.module_dict
 
-        assert f"ip_adapter.{id}.to_q_ip.lora_up.weight" in state_dict
-        assert f"ip_adapter.{id}.to_q_ip.lora_down.weight" in state_dict
-        assert f"ip_adapter.{id}.to_q_ip.alpha" in state_dict
+        assert f"ip_adapter.{id}.to_k_ip.lora_up.weight" in state_dict
+        assert f"ip_adapter.{id}.to_k_ip.lora_down.weight" in state_dict
+        assert f"ip_adapter.{id}.to_k_ip.alpha" in state_dict
 
         assert f"ip_adapter.{id}.to_k_ip.lora_up.weight" in state_dict
         assert f"ip_adapter.{id}.to_v_ip.lora_up.weight" in state_dict
@@ -128,6 +128,7 @@ def test_sdxl_ip_adapter_peft():
         ),
     )
     model = SDXLModelWithIPAdapter.from_config(config)
+    model.init_adapter()
 
     adapter_state_dict = model.manager.get_state_dict()
 
@@ -138,9 +139,9 @@ def test_sdxl_ip_adapter_peft():
         assert f"ip_adapter!{id}!to_k_ip" in model.manager.module_dict
         assert f"ip_adapter!{id}!to_v_ip" in model.manager.module_dict
 
-        assert f"ip_adapter.{id}.to_q_ip.lora_up.weight" in adapter_state_dict
-        assert f"ip_adapter.{id}.to_q_ip.lora_down.weight" in adapter_state_dict
-        assert f"ip_adapter.{id}.to_q_ip.alpha" in adapter_state_dict
+        assert f"ip_adapter.{id}.to_k_ip.lora_up.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.to_k_ip.lora_down.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.to_k_ip.alpha" in adapter_state_dict
 
         assert f"ip_adapter.{id}.to_k_ip.lora_up.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.to_v_ip.lora_up.weight" in adapter_state_dict

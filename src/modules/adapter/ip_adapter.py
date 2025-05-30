@@ -308,6 +308,7 @@ class IPAdapterConfig(BaseModel):
     feature_dim: int = 768
 
     peft: PeftConfigUnion | None = None
+    skip_zero_tokens: bool = False
 
 
 # MARK: IPAdapterManager
