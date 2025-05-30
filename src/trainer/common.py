@@ -1,5 +1,6 @@
 from tqdm import tqdm
 import warnings
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -55,9 +56,10 @@ class Trainer:
         self.seed = seed
         self.debug_mode = config.trainer.debug_mode
 
+        self.gradient_accumulation_steps = config.trainer.gradient_accumulation_steps
         self.accelerator = Accelerator(
             log_with=get_trackers(config),
-            gradient_accumulation_steps=config.trainer.gradient_accumulation_steps,
+            gradient_accumulation_steps=1,
         )
         if (
             (self.debug_mode is False)
@@ -301,13 +303,20 @@ class Trainer:
                 total=len(self.train_dataloader), desc=f"Train Epoch {epoch}"
             ) as pbar:
                 for _steps, batch in enumerate(self.train_dataloader):
-                    with self.accelerator.accumulate(self.model):
-                        current_step += 1
-                        self.before_train_step()
+                    current_step += 1
+                    with self.accelerator.autocast():
+                        with (
+                            # when the last of accumulation steps, we sync gradients.
+                            # otherwise, we do not sync gradients.
+                            self.accelerator.no_sync(self.model)
+                            if current_step % self.gradient_accumulation_steps != 0
+                            else nullcontext()
+                        ):
+                            self.before_train_step()
 
-                        with self.accelerator.autocast():
                             loss = self.model(batch)
                             self.backward(loss)
+                        self.apply_gradients(current_step)
 
                     pbar.set_postfix({"loss": loss.item()})
 
@@ -350,12 +359,16 @@ class Trainer:
                 break
 
     def backward(self, loss: torch.Tensor):
+        loss = loss / self.gradient_accumulation_steps
         self.raw_model.before_backward()
         self.accelerator.backward(loss)
         self.raw_model.after_backward()  # e.g. clip grad norm
-        self.optimizer.step()
-        self.scheduler.step()
-        self.optimizer.zero_grad()
+
+    def apply_gradients(self, current_step: int):
+        if current_step % self.gradient_accumulation_steps == 0:
+            self.optimizer.step()
+            self.scheduler.step()
+            self.optimizer.zero_grad()
 
     def call_saving_callbacks(self, epoch: int, steps: int):
         if self.saving_strategy.should_save(epoch, steps):
@@ -438,7 +451,10 @@ class Trainer:
             self.print("Sanity check done. Exiting...")
             return
 
-        self.training_loop()
+        try:
+            self.training_loop()
+        finally:
+            self.accelerator.end_training()
 
         self.after_train()
 
