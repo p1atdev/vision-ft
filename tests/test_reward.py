@@ -4,7 +4,7 @@ import random
 
 from transformers import set_seed
 
-from src.modules.reward import PickScoreRewardModel
+from modules.reward.pickscore import PickScoreRewardModel
 
 
 def test_pick_score_reward_model():

@@ -1,5 +1,6 @@
-from abc import ABC, abstractmethod
+from typing import Literal
 from PIL import Image
+from pydantic import BaseModel
 
 import torch
 from torch import nn
@@ -10,16 +11,19 @@ from transformers import (
     BatchEncoding,
 )
 
+from .utils import RewardModelMixin, RewardModelConfig
 
-class RewardModelMixin(ABC):
-    @abstractmethod
-    def __call__(
-        self,
-        images: list[Image.Image],
-        prompts: list[str],
-        # TODO: more args?
-    ) -> torch.Tensor:
-        pass
+
+class PickScoreConfig(RewardModelConfig):
+    type: Literal["pickscore"] = "pickscore"
+
+    model_id: str = "yuvalkirstain/PickScore_v1"
+
+    def load_model(self, device: torch.device) -> "PickScoreRewardModel":
+        """
+        Load the PickScore model on the specified device.
+        """
+        return PickScoreRewardModel(device=device, model_id=self.model_id)
 
 
 # https://huggingface.co/yuvalkirstain/PickScore_v1
@@ -30,9 +34,7 @@ class PickScoreRewardModel(RewardModelMixin):
         model_id: str = "yuvalkirstain/PickScore_v1",
     ):
         self.processor = AutoProcessor.from_pretrained(model_id)
-        self.model = AutoModelForZeroShotImageClassification.from_pretrained(
-            model_id,
-        )
+        self.model = AutoModelForZeroShotImageClassification.from_pretrained(model_id)
         self.model.to(device)
         self.model.eval()
 
