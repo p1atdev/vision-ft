@@ -99,7 +99,10 @@ class TextToImageBucket(AspectRatioBucket):
             [
                 v2.PILToTensor(),  # PIL -> Tensor
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
-                v2.Lambda(lambd=lambda x: x * 2.0 - 1.0),  # 0~1 -> -1~1
+                v2.Normalize(
+                    mean=[0.5, 0.5, 0.5],
+                    std=[0.5, 0.5, 0.5],
+                ),  # 0~1 -> -1~1
                 ObjectCoverResize(
                     width,
                     height,
@@ -107,12 +110,6 @@ class TextToImageBucket(AspectRatioBucket):
                 ),
             ]
         )
-        self.crop_transform = v2.Compose(
-            [
-                v2.RandomCrop(size=(height, width), padding=None),
-            ]
-        )
-
         self.width = width
         self.height = height
         self.do_upscale = do_upscale
@@ -158,7 +155,7 @@ class TextToImageBucket(AspectRatioBucket):
                 crop_image, top, left, crop_height, crop_width, height, width = (
                     self.random_crop(image)
                 )
-                images.append(self.crop_transform(crop_image))
+                images.append(crop_image)
                 original_size.append(torch.tensor([height, width]))
                 target_size.append(torch.tensor([crop_height, crop_width]))
                 crop_coords_top_left.append(torch.tensor([top, left]))
