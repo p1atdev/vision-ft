@@ -18,7 +18,7 @@ from ....utils.dtype import str_to_dtype
 from ..pipeline import SDXLModel
 from ..config import SDXLConfig
 from ...auto import AutoImageEncoder
-from ....dataset.transform import PaddedResize
+from ....dataset.transform import PaddedResize, ColorChannelSwap
 from ....modules.peft import PeftConfigUnion
 from ....modules.peft.util import PeftLayer
 from ....modules.peft.functional import _get_peft_linear, extract_peft_layers
@@ -398,6 +398,15 @@ class SDXLModelWithIPAdapter(SDXLModel):
                     fill=self.config.adapter.background_color,
                 ),
                 v2.ToDtype(torch.float16, scale=True),  # 0~255 -> 0~1
+                ColorChannelSwap(
+                    # rgb -> bgr
+                    swap=(
+                        (2, 1, 0)
+                        if self.config.adapter.color_channel == "bgr"
+                        else (0, 1, 2)
+                    ),
+                    skip=self.config.adapter.color_channel == "rgb",
+                ),
                 v2.Normalize(
                     mean=self.config.adapter.image_mean,
                     std=self.config.adapter.image_std,

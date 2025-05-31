@@ -305,6 +305,7 @@ class IPAdapterConfig(BaseModel):
     )
     image_mean: list[float] = [0.5, 0.5, 0.5]
     image_std: list[float] = [0.5, 0.5, 0.5]
+    color_channel: Literal["rgb", "bgr"] = "rgb"
     feature_dim: int = 768
 
     peft: PeftConfigUnion | None = None
