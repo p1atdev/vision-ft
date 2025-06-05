@@ -126,6 +126,9 @@ class CrossAttention(nn.Module):
         query: torch.Tensor,
         context: torch.Tensor,
         mask: torch.Tensor | None = None,
+        time_embedding: torch.Tensor | None = None,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         q = self.to_q(query)
         k = self.to_k(context)
@@ -238,7 +241,10 @@ class TransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(hidden_dim)
 
     def forward(
-        self, hidden_states: torch.Tensor, context: torch.Tensor
+        self,
+        hidden_states: torch.Tensor,
+        context: torch.Tensor,
+        time_embedding: torch.Tensor,
     ) -> torch.Tensor:
         # 1. self attention
         hidden_states = hidden_states + self.attn1(
@@ -247,7 +253,10 @@ class TransformerBlock(nn.Module):
 
         # 2. cross attention
         hidden_states = hidden_states + self.attn2(
-            self.norm2(hidden_states), context=context
+            self.norm2(hidden_states),
+            context=context,
+            # ↓ not always used. only used when using AdaLN-Zero IP-Adapter
+            time_embedding=time_embedding,
         )
 
         # 3. feed forward
@@ -296,6 +305,7 @@ class SpatialTransformer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         context: torch.Tensor | None = None,
+        time_embedding: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch_size, num_channels, height, width = hidden_states.shape
 
@@ -312,7 +322,11 @@ class SpatialTransformer(nn.Module):
 
         hidden_states = self.proj_in(hidden_states)
         for i, block in enumerate(self.transformer_blocks):
-            hidden_states = block(hidden_states, context=context)
+            hidden_states = block(
+                hidden_states,
+                context=context,
+                time_embedding=time_embedding,
+            )
         hidden_states = self.proj_out(hidden_states)
 
         hidden_states = (
@@ -684,7 +698,8 @@ class DownBlocks(nn.Module):
         self,
         hidden_states: torch.Tensor,
         context: torch.Tensor,
-        embedding: torch.Tensor,
+        global_embedding: torch.Tensor,
+        time_embedding: torch.Tensor,
     ) -> DownBlocksOutput:
         skip_connections: list[torch.Tensor] = []
 
@@ -697,7 +712,7 @@ class DownBlocks(nn.Module):
                     hidden_states = _forward_layer(
                         layer,
                         hidden_states,
-                        embedding,
+                        global_embedding,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, SpatialTransformer):
@@ -705,6 +720,7 @@ class DownBlocks(nn.Module):
                         layer,
                         hidden_states,
                         context,
+                        time_embedding,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Downsample):
@@ -779,14 +795,15 @@ class MidBlock(nn.Module):
         self,
         hidden_states: torch.Tensor,
         context: torch.Tensor,
-        embedding: torch.Tensor,
+        global_embedding: torch.Tensor,
+        time_embedding: torch.Tensor,
     ) -> torch.Tensor:
         for layer in self.blocks:
             if isinstance(layer, ResidualBlock):
                 hidden_states = _forward_layer(
                     layer,
                     hidden_states,
-                    embedding,
+                    global_embedding,
                     gradient_checkpointing=self.gradient_checkpointing,
                 )
             elif isinstance(layer, SpatialTransformer):
@@ -794,6 +811,7 @@ class MidBlock(nn.Module):
                     layer,
                     hidden_states,
                     context,
+                    time_embedding,
                     gradient_checkpointing=self.gradient_checkpointing,
                 )
             else:
@@ -900,8 +918,9 @@ class UpBlocks(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        embedding: torch.Tensor,
         context: torch.Tensor,
+        global_embedding: torch.Tensor,
+        time_embedding: torch.Tensor,
         skip_connections: list[torch.Tensor],
     ) -> torch.Tensor:
         for layer_list in self.blocks:
@@ -916,7 +935,7 @@ class UpBlocks(nn.Module):
                     hidden_states = _forward_layer(
                         layer,
                         hidden_states,
-                        embedding,
+                        global_embedding,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, SpatialTransformer):
@@ -924,6 +943,7 @@ class UpBlocks(nn.Module):
                         layer,
                         hidden_states,
                         context,
+                        time_embedding,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Upsample):
@@ -1107,7 +1127,7 @@ class UNet(nn.Module):
             global_cond + time_embed
         )
 
-        return global_cond
+        return time_embed, global_cond
 
     def forward(
         self,
@@ -1121,7 +1141,7 @@ class UNet(nn.Module):
     ) -> torch.Tensor:
         # 1. global condition embedding
         # global condition embedding, including timestep and image sizes
-        global_cond = self.prepare_global_condition(
+        time_embed, global_cond = self.prepare_global_condition(
             timestep,
             encoder_pooler_output,
             original_size,
@@ -1132,15 +1152,27 @@ class UNet(nn.Module):
 
         # 2. down blocks
         latents, skip_connections = self.input_blocks(
-            latents, encoder_hidden_states, global_cond
+            latents,
+            context=encoder_hidden_states,
+            global_embedding=global_cond,
+            time_embedding=time_embed,
         )
 
         # 3. middle blocks
-        latents = self.middle_block(latents, encoder_hidden_states, global_cond)
+        latents = self.middle_block(
+            latents,
+            context=encoder_hidden_states,
+            global_embedding=global_cond,
+            time_embedding=time_embed,
+        )
 
         # 4. up blocks
         latents = self.output_blocks(
-            latents, global_cond, encoder_hidden_states, skip_connections
+            latents,
+            context=encoder_hidden_states,
+            global_embedding=global_cond,
+            time_embedding=time_embed,
+            skip_connections=skip_connections,
         )
 
         # 5. output
