@@ -188,6 +188,8 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         latents: torch.Tensor,
         context: torch.Tensor,  # encoder hidden states + ip tokens
         mask: torch.Tensor | None = None,
+        *args,
+        **kwargs,
     ):
         # 1. separate text encoder_hiden_states and ip_tokens
         text_hidden_states = context[:, : -self.num_ip_tokens, :]
@@ -462,6 +464,8 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         latents: torch.Tensor,
         context: torch.Tensor,  # encoder hidden states + ip tokens
         mask: torch.Tensor | None = None,
+        *args,
+        **kwargs,
     ):
         # 1. separate text encoder_hiden_states and ip_tokens
         text_hidden_states = context[:, : -self.num_ip_tokens, :]
