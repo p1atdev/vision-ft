@@ -1,4 +1,5 @@
 from PIL import Image
+import warnings
 
 import torch
 import torch.nn as nn
@@ -13,6 +14,7 @@ from ....modules.adapter.ip_adapter import (
     IPAdapterConfig,
     IPAdapterManager,
 )
+from ....modules.norm import SingleAdaLayerNormZero
 from ....utils.state_dict import RegexMatch
 from ....utils.dtype import str_to_dtype
 from ..pipeline import SDXLModel
@@ -43,6 +45,8 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
         skip_zero_tokens: bool = False,  # skip ip calculation if ip tokens are all zeros
+        *args,
+        **kwargs,
     ):
         super().__init__()
 
@@ -90,14 +94,18 @@ class IPAdapterCrossAttentionSDXL(Adapter):
 
         # copy weights from original modules, if they are not quantized
         if not hasattr(self.to_k, "quant_type"):
-            self.to_k_ip.weight.data.copy_(self.to_k.weight.data)
+            with torch.no_grad():
+                self.to_k_ip.weight.copy_(self.to_k.weight)
         else:
+            warnings.warn("to_k is quantized, initializing to_k_ip with small values.")
             # otherwise, init with small values
             nn.init.normal_(self.to_k_ip.weight, mean=-0.01, std=0.01)
 
         if not hasattr(self.to_v, "quant_type"):
-            self.to_v_ip.weight.data.copy_(self.to_v.weight.data)
+            with torch.no_grad():
+                self.to_v_ip.weight.copy_(self.to_v.weight)
         else:
+            warnings.warn("to_v is quantized, initializing to_v_ip with small values.")
             # otherwise, init with small values
             nn.init.normal_(self.to_v_ip.weight, mean=-0.01, std=0.01)
 
@@ -215,6 +223,134 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         return hidden_states
 
 
+class IPAdapterCrossAttentionAdaLNZeroSDXL(IPAdapterCrossAttentionSDXL):
+    def __init__(
+        self,
+        cross_attention_dim: int,
+        num_heads: int,
+        head_dim: int,
+        to_q: nn.Linear,
+        to_k: nn.Linear,
+        to_v: nn.Linear,
+        to_out: nn.Module,
+        ip_scale: float = 1.0,
+        num_ip_tokens: int = 4,
+        attn_implementation: AttentionImplementation = "eager",
+        skip_zero_tokens: bool = False,  # skip ip calculation if ip tokens are all zeros
+        time_embedding_dim: int = 512,
+    ):
+        super().__init__(
+            cross_attention_dim=cross_attention_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            to_q=to_q,
+            to_k=to_k,
+            to_v=to_v,
+            to_out=to_out,
+            ip_scale=ip_scale,
+            num_ip_tokens=num_ip_tokens,
+            attn_implementation=attn_implementation,
+            skip_zero_tokens=skip_zero_tokens,
+        )
+
+        self.norm = SingleAdaLayerNormZero(
+            hidden_dim=cross_attention_dim,
+            embedding_dim=time_embedding_dim,
+        )
+
+    def init_weights(self):
+        super().init_weights()  # init to_k_ip, to_v_ip
+
+        # init AdaLN-Zero
+        self.norm.init_weights()
+
+    def get_module_dict(self) -> dict[str, nn.Module]:
+        return {
+            "to_k_ip": self.to_k_ip,
+            "to_v_ip": self.to_v_ip,
+            "norm": self.norm,
+        }
+
+    @classmethod
+    def from_module(
+        cls,
+        module: nn.Module,  # should be SDXL's CrossAttention
+        config: IPAdapterConfig,
+    ) -> "IPAdapterCrossAttentionSDXL":
+        new_module = cls(
+            cross_attention_dim=module.to_k.in_features,
+            num_heads=module.num_heads,
+            head_dim=module.head_dim,
+            to_q=module.to_q,
+            to_k=module.to_k,
+            to_v=module.to_v,
+            to_out=module.to_out,
+            ip_scale=config.ip_scale,
+            num_ip_tokens=config.num_ip_tokens,
+            attn_implementation=module.attn_implementation,
+            skip_zero_tokens=config.skip_zero_tokens,
+        )
+        new_module.freeze_original_modules()
+
+        new_module.to_k_ip.to(dtype=str_to_dtype(config.dtype))
+        new_module.to_v_ip.to(dtype=str_to_dtype(config.dtype))
+        new_module.norm.to(dtype=str_to_dtype(config.dtype))
+
+        return new_module
+
+    def forward(
+        self,
+        latents: torch.Tensor,
+        context: torch.Tensor,  # encoder hidden states + ip tokens
+        mask: torch.Tensor | None = None,
+        time_embedding: torch.Tensor | None = None,  # time embedding for AdaLN-Zero
+    ):
+        assert time_embedding is not None, "time_embedding is required for AdaLN-Zero."
+
+        # 1. separate text encoder_hiden_states and ip_tokens
+        text_hidden_states = context[:, : -self.num_ip_tokens, :]
+        ip_tokens = context[:, -self.num_ip_tokens :, :]
+
+        # 2. attention latents and text features
+        query = self.to_q(latents)
+        text_key = self.to_k(text_hidden_states)
+        text_vey = self.to_v(text_hidden_states)
+
+        hidden_states = self.cross_attention(
+            query=query,
+            key=text_key,
+            value=text_vey,
+            mask=mask,
+        )
+
+        if not (self.skip_zero_tokens and torch.all(ip_tokens == 0)):
+            # 3.1 AdaLN
+            ip_tokens, _scale, _shift, gate = self.norm(
+                ip_tokens,
+                time_embedding,
+            )
+
+            # 3.2 attention ip tokens
+            ip_key = self.to_k_ip(ip_tokens)
+            ip_value = self.to_v_ip(ip_tokens)
+
+            ip_hidden_states = self.cross_attention(
+                query=query,
+                key=ip_key,
+                value=ip_value,
+                mask=None,
+            )
+
+            # 3.3 gate ip_hidden_states
+            ip_hidden_states = gate * ip_hidden_states
+
+            hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+
+        hidden_states = self.to_out(hidden_states)
+
+        return hidden_states
+
+
 class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
     to_q_ip: PeftLayer
     to_k_ip: PeftLayer
@@ -234,6 +370,8 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
         skip_zero_tokens: bool = False,
+        *args,
+        **kwargs,
     ):
         super().__init__(
             cross_attention_dim,
@@ -300,6 +438,7 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
             skip_zero_tokens=config.skip_zero_tokens,
+            time_embedding_dim=config.time_embedding_dim,
         )
         new_module.freeze_original_modules()
 
@@ -369,18 +508,21 @@ class SDXLModelWithIPAdapter(SDXLModel):
     def __init__(self, config: SDXLModelWithIPAdapterConfig):
         super().__init__(config)
 
-        # 2. setup image encoder
+        # 1. setup image encoder
         self.encoder = AutoImageEncoder(
             config=self.config.adapter.image_encoder,
         )
 
+        # 2. select adapter class
+        adapter_class = IPAdapterCrossAttentionSDXL  # default
+        if self.config.adapter.peft is not None:
+            adapter_class = IPAdapterCrossAttentionPeftSDXL
+        elif self.config.adapter.use_adaln_zero:
+            adapter_class = IPAdapterCrossAttentionAdaLNZeroSDXL
+
         # 3. setup adapter
         self.manager = IPAdapterManager(
-            adapter_class=(
-                IPAdapterCrossAttentionSDXL
-                if self.config.adapter.peft is None
-                else IPAdapterCrossAttentionPeftSDXL
-            ),
+            adapter_class=adapter_class,
             adapter_config=self.config.adapter,
         )
 

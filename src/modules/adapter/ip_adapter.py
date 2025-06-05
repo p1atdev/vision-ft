@@ -308,8 +308,13 @@ class IPAdapterConfig(BaseModel):
     color_channel: Literal["rgb", "bgr"] = "rgb"
     feature_dim: int = 768
 
+    # peft type
     peft: PeftConfigUnion | None = None
     skip_zero_tokens: bool = False
+
+    # AdaLN type
+    use_adaln_zero: bool = False
+    time_embedding_dim: int = 512
 
 
 # MARK: IPAdapterManager
