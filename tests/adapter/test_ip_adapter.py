@@ -123,8 +123,10 @@ def test_apply_ip_adapter_adaln():
 
         assert f"ip_adapter.{id}.to_k_ip.weight" in state_dict
         assert f"ip_adapter.{id}.to_v_ip.weight" in state_dict
-        assert f"ip_adapter.{id}.norm.linear.weight" in state_dict
-        assert f"ip_adapter.{id}.norm.linear.bias" in state_dict
+        assert f"ip_adapter.{id}.norm.scale_shift.weight" in state_dict
+        assert f"ip_adapter.{id}.norm.scale_shift.bias" in state_dict
+        assert f"ip_adapter.{id}.norm.gate.weight" in state_dict
+        assert f"ip_adapter.{id}.norm.gate.bias" in state_dict
 
 
 def test_sdxl_ip_adapter():
@@ -212,5 +214,7 @@ def test_sdxl_ip_adapter_adaln():
 
         assert f"ip_adapter.{id}.to_k_ip.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.to_v_ip.weight" in adapter_state_dict
-        assert f"ip_adapter.{id}.norm.linear.weight" in adapter_state_dict
-        assert f"ip_adapter.{id}.norm.linear.bias" in adapter_state_dict
+        assert f"ip_adapter.{id}.norm.scale_shift.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.norm.scale_shift.bias" in adapter_state_dict
+        assert f"ip_adapter.{id}.norm.gate.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.norm.gate.bias" in adapter_state_dict

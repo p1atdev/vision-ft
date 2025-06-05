@@ -314,7 +314,6 @@ class IPAdapterConfig(BaseModel):
 
     # AdaLN type
     use_adaln_zero: bool = False
-    time_embedding_dim: int = 1280
 
 
 # MARK: IPAdapterManager

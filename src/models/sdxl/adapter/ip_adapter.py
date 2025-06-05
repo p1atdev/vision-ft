@@ -239,7 +239,7 @@ class IPAdapterCrossAttentionAdaLNZeroSDXL(IPAdapterCrossAttentionSDXL):
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
         skip_zero_tokens: bool = False,  # skip ip calculation if ip tokens are all zeros
-        time_embedding_dim: int = 512,
+        time_embedding_dim: int = 1280,  # SDXL's time embedding dim
     ):
         super().__init__(
             cross_attention_dim=cross_attention_dim,
@@ -257,6 +257,7 @@ class IPAdapterCrossAttentionAdaLNZeroSDXL(IPAdapterCrossAttentionSDXL):
 
         self.norm = SingleAdaLayerNormZero(
             hidden_dim=cross_attention_dim,
+            gate_dim=self.inner_dim,
             embedding_dim=time_embedding_dim,
         )
 
@@ -344,7 +345,9 @@ class IPAdapterCrossAttentionAdaLNZeroSDXL(IPAdapterCrossAttentionSDXL):
             )
 
             # 3.3 gate ip_hidden_states
-            ip_hidden_states = gate * ip_hidden_states
+            ip_hidden_states = ip_hidden_states * gate.unsqueeze(
+                1
+            )  # (b, dim) -> (b, 1, dim)
 
             hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
@@ -440,7 +443,6 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
             skip_zero_tokens=config.skip_zero_tokens,
-            time_embedding_dim=config.time_embedding_dim,
         )
         new_module.freeze_original_modules()
 
