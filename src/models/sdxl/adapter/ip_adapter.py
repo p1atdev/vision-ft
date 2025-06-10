@@ -424,7 +424,7 @@ class IPAdapterCrossAttentionGateSDXL(IPAdapterCrossAttentionSDXL):
         return {
             "to_k_ip": self.to_k_ip,
             "to_v_ip": self.to_v_ip,
-            "gate": self.gate,  # type: ignore
+            "gate": self.gate,
         }
 
     @classmethod
