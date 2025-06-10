@@ -356,6 +356,151 @@ class IPAdapterCrossAttentionAdaLNZeroSDXL(IPAdapterCrossAttentionSDXL):
         return hidden_states
 
 
+# flamingo tanh gate
+class TanhGate(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+
+        self.weight = nn.Parameter(
+            torch.zeros(
+                dim,
+                dtype=torch.float32,
+                requires_grad=True,
+            )
+        )
+
+    def init_weights(self):
+        # Initialize the weight to zero
+        nn.init.zeros_(self.weight)
+
+        self.weight.requires_grad_(True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * torch.tanh(self.weight)
+
+
+class IPAdapterCrossAttentionGateSDXL(IPAdapterCrossAttentionSDXL):
+    def __init__(
+        self,
+        cross_attention_dim: int,
+        num_heads: int,
+        head_dim: int,
+        to_q: nn.Linear,
+        to_k: nn.Linear,
+        to_v: nn.Linear,
+        to_out: nn.Module,
+        ip_scale: float = 1.0,
+        num_ip_tokens: int = 4,
+        attn_implementation: AttentionImplementation = "eager",
+        skip_zero_tokens: bool = False,  # skip ip calculation if ip tokens are all zeros
+    ):
+        super().__init__(
+            cross_attention_dim=cross_attention_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            to_q=to_q,
+            to_k=to_k,
+            to_v=to_v,
+            to_out=to_out,
+            ip_scale=ip_scale,
+            num_ip_tokens=num_ip_tokens,
+            attn_implementation=attn_implementation,
+            skip_zero_tokens=skip_zero_tokens,
+        )
+
+        self.gate = TanhGate(cross_attention_dim)
+
+    def init_weights(self):
+        super().init_weights()  # init to_k_ip, to_v_ip
+
+        self.gate.data = torch.zeros(
+            self.cross_attention_dim,
+            dtype=self.to_k.weight.dtype,
+            device=self.to_k.weight.device,
+            requires_grad=True,
+        )
+
+    def get_module_dict(self) -> dict[str, nn.Module]:
+        return {
+            "to_k_ip": self.to_k_ip,
+            "to_v_ip": self.to_v_ip,
+            "gate": self.gate,  # type: ignore
+        }
+
+    @classmethod
+    def from_module(
+        cls,
+        module: nn.Module,  # should be SDXL's CrossAttention
+        config: IPAdapterConfig,
+    ) -> "IPAdapterCrossAttentionSDXL":
+        new_module = cls(
+            cross_attention_dim=module.to_k.in_features,
+            num_heads=module.num_heads,
+            head_dim=module.head_dim,
+            to_q=module.to_q,
+            to_k=module.to_k,
+            to_v=module.to_v,
+            to_out=module.to_out,
+            ip_scale=config.ip_scale,
+            num_ip_tokens=config.num_ip_tokens,
+            attn_implementation=module.attn_implementation,
+            skip_zero_tokens=config.skip_zero_tokens,
+        )
+        new_module.freeze_original_modules()
+
+        new_module.to_k_ip.to(dtype=str_to_dtype(config.dtype))
+        new_module.to_v_ip.to(dtype=str_to_dtype(config.dtype))
+        new_module.gate.to(dtype=str_to_dtype(config.dtype))
+
+        return new_module
+
+    def forward(
+        self,
+        latents: torch.Tensor,
+        context: torch.Tensor,  # encoder hidden states + ip tokens
+        mask: torch.Tensor | None = None,
+        time_embedding: torch.Tensor | None = None,  # time embedding for AdaLN-Zero
+    ):
+        assert time_embedding is not None, "time_embedding is required for AdaLN-Zero."
+
+        # 1. separate text encoder_hiden_states and ip_tokens
+        text_hidden_states = context[:, : -self.num_ip_tokens, :]
+        ip_tokens = context[:, -self.num_ip_tokens :, :]
+
+        # 2. attention latents and text features
+        query = self.to_q(latents)
+        text_key = self.to_k(text_hidden_states)
+        text_vey = self.to_v(text_hidden_states)
+
+        hidden_states = self.cross_attention(
+            query=query,
+            key=text_key,
+            value=text_vey,
+            mask=mask,
+        )
+
+        if not (self.skip_zero_tokens and torch.all(ip_tokens == 0)):
+            # 3.1 attention ip tokens
+            ip_key = self.to_k_ip(ip_tokens)
+            ip_value = self.to_v_ip(ip_tokens)
+
+            ip_hidden_states = self.cross_attention(
+                query=query,
+                key=ip_key,
+                value=ip_value,
+                mask=None,
+            )
+
+            # 3.2 gate ip_hidden_states
+            ip_hidden_states = self.gate(ip_hidden_states)
+
+            hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+
+        hidden_states = self.to_out(hidden_states)
+
+        return hidden_states
+
+
 class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
     to_q_ip: PeftLayer
     to_k_ip: PeftLayer
@@ -521,10 +666,20 @@ class SDXLModelWithIPAdapter(SDXLModel):
 
         # 2. select adapter class
         adapter_class = IPAdapterCrossAttentionSDXL  # default
-        if self.config.adapter.peft is not None:
-            adapter_class = IPAdapterCrossAttentionPeftSDXL
-        elif self.config.adapter.use_adaln_zero:
+        if self.config.adapter.variant == "adaln_zero":
             adapter_class = IPAdapterCrossAttentionAdaLNZeroSDXL
+        elif self.config.adapter.variant == "peft":
+            assert self.config.adapter.peft is not None, (
+                'peft config is required when using "peft" variant'
+            )
+            adapter_class = IPAdapterCrossAttentionPeftSDXL
+        elif self.config.adapter.variant == "gate":
+            adapter_class = IPAdapterCrossAttentionGateSDXL
+        elif self.config.adapter.variant != "original":
+            raise ValueError(
+                f"Unknown adapter variant: {self.config.adapter.variant}. "
+                "Supported variants: original, adaln_zero, peft, gate."
+            )
 
         # 3. setup adapter
         self.manager = IPAdapterManager(

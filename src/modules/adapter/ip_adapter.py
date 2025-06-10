@@ -202,17 +202,6 @@ class ResamplerProjector(nn.Module):
         self.proj_out = nn.Linear(dim, dim)
         self.norm_out = nn.LayerNorm(dim)
 
-        # self.to_latents_from_mean_pooled_seq = (
-        #     nn.Sequential(
-        #         nn.LayerNorm(dim),
-        #         nn.Linear(dim, dim * num_latents_mean_pooled),
-        #         Rearrange("b (n d) -> b n d", n=num_latents_mean_pooled),
-        #     )
-        #     if num_latents_mean_pooled > 0
-        #     else None
-        # )
-        self.to_latents_from_mean_pooled_seq = None
-
         self.layers = nn.ModuleList(
             [
                 nn.ModuleList(
@@ -308,12 +297,12 @@ class IPAdapterConfig(BaseModel):
     color_channel: Literal["rgb", "bgr"] = "rgb"
     feature_dim: int = 768
 
+    # AdaLN type
+    variant: Literal["original", "peft", "adaln_zero", "gate"] = "original"
+
     # peft type
     peft: PeftConfigUnion | None = None
     skip_zero_tokens: bool = False
-
-    # AdaLN type
-    use_adaln_zero: bool = False
 
 
 # MARK: IPAdapterManager
