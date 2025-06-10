@@ -408,7 +408,9 @@ class IPAdapterCrossAttentionGateSDXL(IPAdapterCrossAttentionSDXL):
             skip_zero_tokens=skip_zero_tokens,
         )
 
-        self.gate = TanhGate(cross_attention_dim)
+        self.gate = TanhGate(
+            dim=self.inner_dim,
+        )
 
     def init_weights(self):
         super().init_weights()  # init to_k_ip, to_v_ip
