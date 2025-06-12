@@ -298,7 +298,15 @@ class IPAdapterConfig(BaseModel):
     feature_dim: int = 768
 
     # AdaLN type
-    variant: Literal["original", "peft", "adaln_zero", "gate"] = "original"
+    variant: Literal[
+        "original",
+        "peft",
+        "adaln_zero",
+        "tanh_gate",
+        "gate",
+        "flamingo",
+        "time_gate",
+    ] = "original"
 
     # peft type
     peft: PeftConfigUnion | None = None

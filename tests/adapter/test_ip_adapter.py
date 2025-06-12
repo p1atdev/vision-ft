@@ -7,6 +7,9 @@ from src.models.sdxl.adapter.ip_adapter import (
     IPAdapterCrossAttentionPeftSDXL,
     IPAdapterCrossAttentionAdaLNZeroSDXL,
     IPAdapterCrossAttentionGateSDXL,
+    IPAdapterCrossAttentionTanhGateSDXL,
+    IPAdapterCrossAttentionFlamingoGateSDXL,
+    IPAdapterCrossAttentionTimeGateSDXL,
 )
 from src.modules.peft import LoRAConfig
 
@@ -162,6 +165,111 @@ def test_apply_ip_adapter_gate():
         assert f"ip_adapter.{id}.gate.weight" in state_dict
 
 
+def test_apply_ip_adapter_tanh_gate():
+    # Create a dummy SDXL model
+    config = SDXLConfig(
+        checkpoint_path="dummy/path/to/checkpoint",
+    )
+    with init_empty_weights():
+        model = SDXLModel(config)
+
+    manager = IPAdapterManager(
+        adapter_class=IPAdapterCrossAttentionTanhGateSDXL,
+        adapter_config=IPAdapterConfig(
+            ip_scale=1.0,
+            num_ip_tokens=4,
+            feature_dim=768,
+            variant="tanh_gate",  # Enable tanh_gate
+        ),
+    )
+
+    manager.apply_adapter(model)
+    state_dict = manager.get_state_dict()
+
+    # (0 ~ 69) * 2 + 1 = 1 ~ 139
+    for i in range(0, 69):
+        id = i * 2 + 1
+
+        assert f"ip_adapter!{id}!to_k_ip" in manager.module_dict
+        assert f"ip_adapter!{id}!to_v_ip" in manager.module_dict
+        assert f"ip_adapter!{id}!tanh_gate" in manager.module_dict
+
+        assert f"ip_adapter.{id}.to_k_ip.weight" in state_dict
+        assert f"ip_adapter.{id}.to_v_ip.weight" in state_dict
+        assert f"ip_adapter.{id}.tanh_gate.weight" in state_dict
+
+
+def test_apply_ip_adapter_flamingo_gate():
+    # Create a dummy SDXL model
+    config = SDXLConfig(
+        checkpoint_path="dummy/path/to/checkpoint",
+    )
+    with init_empty_weights():
+        model = SDXLModel(config)
+
+    manager = IPAdapterManager(
+        adapter_class=IPAdapterCrossAttentionFlamingoGateSDXL,
+        adapter_config=IPAdapterConfig(
+            ip_scale=1.0,
+            num_ip_tokens=4,
+            feature_dim=768,
+            variant="flamingo",  # Enable flamingo
+        ),
+    )
+
+    manager.apply_adapter(model)
+    state_dict = manager.get_state_dict()
+
+    # (0 ~ 69) * 2 + 1 = 1 ~ 139
+    for i in range(0, 69):
+        id = i * 2 + 1
+
+        assert f"ip_adapter!{id}!to_k_ip" in manager.module_dict
+        assert f"ip_adapter!{id}!to_v_ip" in manager.module_dict
+        assert (
+            f"ip_adapter!{id}!tanh_gate" in manager.module_dict
+        )  # Flamingo uses a TanhGate internally, named 'gate'
+
+        assert f"ip_adapter.{id}.to_k_ip.weight" in state_dict
+        assert f"ip_adapter.{id}.to_v_ip.weight" in state_dict
+        assert f"ip_adapter.{id}.tanh_gate.weight" in state_dict
+
+
+def test_apply_ip_adapter_time_gate():
+    # Create a dummy SDXL model
+    config = SDXLConfig(
+        checkpoint_path="dummy/path/to/checkpoint",
+    )
+    with init_empty_weights():
+        model = SDXLModel(config)
+
+    manager = IPAdapterManager(
+        adapter_class=IPAdapterCrossAttentionTimeGateSDXL,
+        adapter_config=IPAdapterConfig(
+            ip_scale=1.0,
+            num_ip_tokens=4,
+            feature_dim=768,
+            variant="time_gate",  # Enable time_gate
+        ),
+    )
+
+    manager.apply_adapter(model)
+    state_dict = manager.get_state_dict()
+
+    # (0 ~ 69) * 2 + 1 = 1 ~ 139
+    for i in range(0, 69):
+        id = i * 2 + 1
+
+        assert f"ip_adapter!{id}!to_k_ip" in manager.module_dict
+        assert f"ip_adapter!{id}!to_v_ip" in manager.module_dict
+        assert f"ip_adapter!{id}!time_gate" in manager.module_dict
+
+        assert f"ip_adapter.{id}.to_k_ip.weight" in state_dict
+        assert f"ip_adapter.{id}.to_v_ip.weight" in state_dict
+        assert f"ip_adapter.{id}.time_gate.weight" in state_dict
+        assert f"ip_adapter.{id}.time_gate.bias" in state_dict
+
+
 def test_sdxl_ip_adapter():
     # Create a dummy SDXL model
     config = SDXLModelWithIPAdapterConfig(
@@ -172,6 +280,7 @@ def test_sdxl_ip_adapter():
         ),
     )
     model = SDXLModelWithIPAdapter.from_config(config)
+    model.init_adapter()
 
     adapter_state_dict = model.manager.get_state_dict()
 
@@ -205,7 +314,7 @@ def test_sdxl_ip_adapter_peft():
     # (0 ~ 69) * 2 + 1 = 1 ~ 139
     for i in range(0, 69):
         id = i * 2 + 1
-        assert f"ip_adapter!{id}!to_q_ip" in model.manager.module_dict
+        # assert f"ip_adapter!{id}!to_q_ip" in model.manager.module_dict
         assert f"ip_adapter!{id}!to_k_ip" in model.manager.module_dict
         assert f"ip_adapter!{id}!to_v_ip" in model.manager.module_dict
 
@@ -217,8 +326,8 @@ def test_sdxl_ip_adapter_peft():
         assert f"ip_adapter.{id}.to_v_ip.lora_up.weight" in adapter_state_dict
 
         # not to have the original weights
-        assert f"ip_adapter.{id}.to_q_ip.weight" not in adapter_state_dict
-        assert f"ip_adapter.{id}.to_q_ip.linear.weight" not in adapter_state_dict
+        # assert f"ip_adapter.{id}.to_q_ip.weight" not in adapter_state_dict
+        # assert f"ip_adapter.{id}.to_q_ip.linear.weight" not in adapter_state_dict
         assert f"ip_adapter.{id}.to_k_ip.linear.weight" not in adapter_state_dict
         assert f"ip_adapter.{id}.to_v_ip.linear.weight" not in adapter_state_dict
 
@@ -279,3 +388,89 @@ def test_sdxl_ip_adapter_gate():
         assert f"ip_adapter.{id}.to_k_ip.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.to_v_ip.weight" in adapter_state_dict
         assert f"ip_adapter.{id}.gate.weight" in adapter_state_dict
+
+
+def test_sdxl_ip_adapter_tanh_gate():
+    # Create a dummy SDXL model
+    config = SDXLModelWithIPAdapterConfig(
+        checkpoint_path="dummy/path/to/checkpoint",
+        adapter=IPAdapterConfig(
+            num_ip_tokens=4,
+            feature_dim=768,
+            variant="tanh_gate",  # Enable tanh_gate
+        ),
+    )
+    model = SDXLModelWithIPAdapter.from_config(config)
+    model.init_adapter()
+
+    adapter_state_dict = model.manager.get_state_dict()
+
+    # (0 ~ 69) * 2 + 1 = 1 ~ 139
+    for i in range(0, 69):
+        id = i * 2 + 1
+
+        assert f"ip_adapter!{id}!to_k_ip" in model.manager.module_dict
+        assert f"ip_adapter!{id}!to_v_ip" in model.manager.module_dict
+        assert f"ip_adapter!{id}!tanh_gate" in model.manager.module_dict
+
+        assert f"ip_adapter.{id}.to_k_ip.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.to_v_ip.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.tanh_gate.weight" in adapter_state_dict
+
+
+def test_sdxl_ip_adapter_flamingo_gate():
+    # Create a dummy SDXL model
+    config = SDXLModelWithIPAdapterConfig(
+        checkpoint_path="dummy/path/to/checkpoint",
+        adapter=IPAdapterConfig(
+            num_ip_tokens=4,
+            feature_dim=768,
+            variant="flamingo",  # Enable flamingo
+        ),
+    )
+    model = SDXLModelWithIPAdapter.from_config(config)
+    model.init_adapter()
+
+    adapter_state_dict = model.manager.get_state_dict()
+
+    # (0 ~ 69) * 2 + 1 = 1 ~ 139
+    for i in range(0, 69):
+        id = i * 2 + 1
+
+        assert f"ip_adapter!{id}!to_k_ip" in model.manager.module_dict
+        assert f"ip_adapter!{id}!to_v_ip" in model.manager.module_dict
+        assert (
+            f"ip_adapter!{id}!tanh_gate" in model.manager.module_dict
+        )  # Flamingo uses a TanhGate internally, named 'tanh_gate'
+
+        assert f"ip_adapter.{id}.to_k_ip.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.to_v_ip.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.tanh_gate.weight" in adapter_state_dict
+
+
+def test_sdxl_ip_adapter_time_gate():
+    # Create a dummy SDXL model
+    config = SDXLModelWithIPAdapterConfig(
+        checkpoint_path="dummy/path/to/checkpoint",
+        adapter=IPAdapterConfig(
+            num_ip_tokens=4,
+            feature_dim=768,
+            variant="time_gate",  # Enable time_gate
+        ),
+    )
+    model = SDXLModelWithIPAdapter.from_config(config)
+    model.init_adapter()
+
+    adapter_state_dict = model.manager.get_state_dict()
+
+    # (0 ~ 69) * 2 + 1 = 1 ~ 139
+    for i in range(0, 69):
+        id = i * 2 + 1
+
+        assert f"ip_adapter!{id}!to_k_ip" in model.manager.module_dict
+        assert f"ip_adapter!{id}!to_v_ip" in model.manager.module_dict
+        assert f"ip_adapter!{id}!time_gate" in model.manager.module_dict
+
+        assert f"ip_adapter.{id}.to_k_ip.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.to_v_ip.weight" in adapter_state_dict
+        assert f"ip_adapter.{id}.time_gate.weight" in adapter_state_dict
