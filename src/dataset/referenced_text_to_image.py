@@ -196,7 +196,7 @@ class ReferencedTextToImageBucket(TextToImageBucket):
 class ReferencedTextToImageDatasetConfig(TextToImageDatasetConfig):
     metadata_parquet: str
 
-    style_image_size: int = 384
+    image_size: int = 384
     background_color: int = 0  # 0 for black, 1 for white
 
     def _retrive_images(self):
@@ -279,7 +279,7 @@ class ReferencedTextToImageDatasetConfig(TextToImageDatasetConfig):
                 do_upscale=self.do_upscale,
                 num_repeats=self.num_repeats,
                 caption_processors=self.caption_processors,
-                reference_size=self.style_image_size,
+                reference_size=self.image_size,
                 background_color=self.background_color,
             )
             buckets.append(bucket)

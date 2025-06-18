@@ -15,7 +15,7 @@ from src.models.auto import AutoImageEncoder
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
-from src.dataset.styled_text_to_image import ReferencedTextToImageDatasetConfig
+from src.dataset.referenced_text_to_image import ReferencedTextToImageDatasetConfig
 from src.dataset.preview.text_to_image import TextToImagePreviewConfig
 from src.dataset.transform import PaddedResize
 from src.modules.loss.diffusion import (
