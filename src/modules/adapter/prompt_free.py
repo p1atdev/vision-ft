@@ -270,7 +270,6 @@ class ResamplerImageProjector(nn.Module):
 
 
 class PFGConfig(BaseModel):
-    image_token: str = "<|image|>"
     num_image_tokens: int = 4
     image_size: int = 384
     background_color: int = 0
