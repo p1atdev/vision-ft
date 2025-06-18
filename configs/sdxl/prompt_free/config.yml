@@ -73,7 +73,7 @@ tracker:
 saving:
   strategy:
     per_epochs: 1
-    per_steps: 1
+    per_steps: null
     save_last: true
 
   callbacks:
@@ -84,7 +84,7 @@ saving:
 preview:
   strategy:
     per_epochs: 1
-    per_steps: 1
+    per_steps: null
 
   callbacks:
     - type: "local"
