@@ -143,6 +143,8 @@ class SDXLModelWithPFG(SDXLModel):
             reference_image = torch.stack(
                 [self.preprocessor(image) for image in reference_image]
             )
+        elif isinstance(reference_image, torch.Tensor):
+            reference_image: torch.Tensor = self.preprocessor(reference_image)
 
         return reference_image
 
