@@ -26,7 +26,7 @@ model:
 
 peft:
 
-# StyledTextToImageDatasetConfig
+# ReferencedTextToImageDatasetConfig
 dataset:
   folder: "data/styled_images_1k"
   metadata_parquet: "data/metadata_styled_images_1k.parquet"
