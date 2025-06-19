@@ -32,6 +32,19 @@ model:
   max_token_length: 75
 
 peft:
+  config:
+    type: lora
+    rank: 4
+    alpha: 1.0
+    dropout: 0.0
+
+    dtype: bfloat16
+
+  include_keys:
+    # - "attn1"
+    - "attn2" # cross attention only
+    # - ".ff."
+  exclude_keys: ["text_encoder", "vae"]
 
 # ReferencedTextToImageDatasetConfig
 dataset:

@@ -308,6 +308,18 @@ class PFGManager(AdapterManager):
             }
         )
 
+    def set_adapter_trainable(self, trainable: bool = True):
+        # to avoid wrong training state and requires_grad settings,
+        # we have to call train/eval and requires_grad_ directly on each module.
+        # otherwise, torch does not call the overridden train/eval/requires_grad_ methods,
+        # and that causes wrong trainable flags during training.
+        for name, module in self.module_dict.named_children():
+            if "projector" not in name:
+                continue
+
+            module.train(trainable)
+            module.requires_grad_(trainable)
+
     def get_projector(self, out_features: int):
         if self.adapter_config.projector_type == "linear":
             return LinearImageProjector(

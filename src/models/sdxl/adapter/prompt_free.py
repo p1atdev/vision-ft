@@ -86,9 +86,6 @@ class SDXLModelWithPFG(SDXLModel):
     def _from_checkpoint(self, strict: bool = True):
         super()._from_checkpoint(strict)
 
-        # freeze base model
-        self.freeze_base_model()
-
         # re-initialize adapter after loading base model
         self.init_adapter()
 

@@ -4,7 +4,7 @@ import click
 
 import torch
 import torch.nn as nn
-
+from accelerate import init_empty_weights
 
 from src.models.sdxl.adapter.prompt_free import (
     SDXLModelWithPFG,
@@ -20,7 +20,7 @@ from src.modules.loss.diffusion import (
     loss_with_predicted_noise,
 )
 from src.modules.timestep.sampling import uniform_randint, gaussian_randint
-
+from src.modules.peft import get_adapter_parameters
 
 from src.utils.tensor import remove_orig_mod_prefix
 from src.utils.logging import wandb_image
@@ -44,12 +44,22 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
 
     def setup_model(self):
         # setup SDXL
-        self.model = SDXLModelWithPFG.from_checkpoint(self.model_config)
-        self.model.freeze_base_model()
+        with init_empty_weights():
+            self.model = SDXLModelWithPFG(self.model_config)
 
-        # make adapter trainable
-        self.model.projector.train()
-        self.model.projector.requires_grad_(True)
+            self.model.text_encoder.eval()
+            self.model.text_encoder.requires_grad_(False)
+            self.model.vae.eval()  # type: ignore
+            self.model.vae.requires_grad_(False)
+
+        self.model._from_checkpoint()  # load!
+
+        if self.config.peft is None:
+            self.model.denoiser.eval()
+            self.model.denoiser.requires_grad_(False)
+
+        # make adapter trainable later!
+        # self.model.manager.set_adapter_trainable(True)
 
         if self.model_config.freeze_vision_encoder:
             # freeze vision encoder
@@ -257,6 +267,9 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         return [image]
 
     def after_setup_model(self):
+        # set projector trainable
+        self.model.manager.set_adapter_trainable(True)
+
         if self.config.trainer.gradient_checkpointing:
             self.model.denoiser.set_gradient_checkpointing(True)
 
@@ -265,12 +278,17 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
     def get_state_dict_to_save(
         self,
     ) -> dict[str, torch.Tensor]:
-        adapter_state_dict = (
-            self.raw_model.manager.get_state_dict()
-        )  # get pfg adapter state dict
-        state_dict = {
-            remove_orig_mod_prefix(k): v for k, v in adapter_state_dict.items()
-        }
+        # get pfg adapter state dict
+        adapter_state_dict = self.raw_model.manager.get_state_dict()
+
+        state_dict = adapter_state_dict
+
+        # LoRA
+        if self._is_peft:
+            peft_state_dict = get_adapter_parameters(self.model)
+            state_dict |= peft_state_dict
+
+        state_dict = {remove_orig_mod_prefix(k): v for k, v in state_dict.items()}
 
         return state_dict
 

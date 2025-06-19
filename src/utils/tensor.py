@@ -1,6 +1,8 @@
 from PIL import Image
 
 import torch
+import torch.nn as nn
+
 import numpy as np
 
 
@@ -91,3 +93,37 @@ def swap_seq_len_and_num_heads(
 ) -> tuple[torch.Tensor, ...]:
     # [batch_size, seq_len, num_heads, head_dim] -> [batch_size, num_heads, seq_len, head_dim]
     return tuple(arg.transpose(1, 2) for arg in args)
+
+
+def set_trainable(
+    model: nn.Module,
+    trainable: bool = True,
+) -> None:
+    """
+    Set the trainable state of the model's parameters.
+    """
+    for param in model.parameters():
+        param.requires_grad = trainable
+
+    for buffer in model.buffers():
+        buffer.requires_grad = False
+
+    if hasattr(model, "set_trainable"):
+        model.set_trainable(trainable)
+
+
+def set_requires_grad(
+    model: nn.Module,
+    requires_grad: bool = True,
+) -> None:
+    """
+    Set the requires_grad state of the model's parameters.
+    """
+    for param in model.parameters():
+        param.requires_grad = requires_grad
+
+    for buffer in model.buffers():
+        buffer.requires_grad = False
+
+    if hasattr(model, "set_requires_grad"):
+        model.set_requires_grad(requires_grad)
