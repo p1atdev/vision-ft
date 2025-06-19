@@ -193,13 +193,13 @@ class Trainer:
         else:
             self.model._set_is_peft(False)
 
-        print_trainable_parameters(self.model, self.print)
-
     def prepare_model(self):
         self.model.before_setup_model()
         self.model.setup_model()
         self.setup_peft_if_needed()
         self.model.after_setup_model()
+
+        print_trainable_parameters(self.model, self.print)
 
         self.model = self.accelerator.prepare(self.model)
 
