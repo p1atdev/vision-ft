@@ -9,7 +9,6 @@ from .config import PeftConfigMixin, PEFT_TYPE
 from .util import PeftLayer
 from .lora import LoRAConfig, LoRALinear, LoRAConv2d
 from .loha import LoHaConfig, LoHaLinear
-from .loha_lite import LoHaLiteConfig, LoHaLiteLinear
 from ...utils.tensor import remove_orig_mod_prefix
 from ...utils.state_dict import get_target_keys, RegexMatch
 
@@ -35,13 +34,6 @@ def _get_peft_linear(
             original_linear=module,
         )
 
-    elif config.type == "loha_lite":
-        config = LoHaLiteConfig.model_validate(config.model_dump())
-        return LoHaLiteLinear(
-            config=config,
-            original_linear=module,
-        )
-
     else:
         raise ValueError(f"Unknown peft type: {config.type}")
 
@@ -53,11 +45,7 @@ def _get_peft_conv2d(
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
 
-    if (
-        (config.type == "lora")
-        or (config.type == "loha")
-        or (config.type == "loha_lite")
-    ):
+    if (config.type == "lora") or (config.type == "loha"):
         config = LoRAConfig.model_validate(config.model_dump())
         return LoRAConv2d(
             config=config,
@@ -178,9 +166,6 @@ def get_peft_linear_class(peft_type: PEFT_TYPE) -> type[PeftLayer]:
 
     elif peft_type == "loha":
         return LoHaLinear
-
-    elif peft_type == "loha_lite":
-        return LoHaLiteLinear
 
     raise ValueError(f"Unknown peft type: {peft_type}")
 

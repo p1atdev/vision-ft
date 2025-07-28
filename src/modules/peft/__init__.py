@@ -14,12 +14,11 @@ from .functional import (
 )
 from .lora import LoRAConfig, LoRALinear, LoRAConv2d
 from .loha import LoHaConfig, LoHaLinear
-from .loha_lite import LoHaLiteConfig, LoHaLiteLinear
 
 from ...utils.state_dict import RegexMatch
 
 
-PeftConfigUnion = LoRAConfig | LoHaConfig | LoHaLiteConfig
+PeftConfigUnion = LoRAConfig | LoHaConfig
 
 
 class PeftTargetConfig(BaseModel):
