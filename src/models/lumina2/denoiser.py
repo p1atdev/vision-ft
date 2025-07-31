@@ -10,8 +10,13 @@ from ...modules.attention import scaled_dot_product_attention
 from ...modules.timestep.embedding import get_timestep_embedding
 from ...modules.patch import patchify, unpatchify
 
+from .config import DenoiserConfig
+
 # ref:
 # Lumina Image 2.0: https://github.com/Alpha-VLLM/Lumina-Image-2.0/blob/main/models/model.py#L884-L894
+
+
+DENOISER_TENSOR_PREFIX = "model.diffusion_model."
 
 
 class TimestepEmbedder(nn.Module):
@@ -901,3 +906,24 @@ class NextDiT(nn.Module):
         )
 
         return latents, caption_mask, caption_features
+
+
+class Denoiser(NextDiT):
+    def __init__(self, config: DenoiserConfig):
+        super().__init__(
+            patch_size=config.patch_size,
+            in_channels=config.in_channels,
+            hidden_dim=config.hidden_dim,
+            timestep_embed_dim=config.timestep_embed_dim,
+            num_layers=config.depth,
+            num_refiner_layers=config.refiner_depth,
+            num_heads=config.num_heads,
+            num_kv_heads=config.num_kv_heads,
+            multiple_of=config.multiple_of,
+            norm_eps=config.norm_eps,
+            caption_dim=config.caption_dim,
+            axes_dims=config.axes_dims,
+            axes_lens=config.axes_lens,
+        )
+
+        self.config = config

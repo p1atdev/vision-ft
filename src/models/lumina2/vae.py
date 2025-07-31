@@ -49,6 +49,10 @@ class VAE(AutoencoderKL):
     scaling_factor = FLUX_VAE_SCALING_FACTOR
     shift_factor = FLUX_VAE_SHIFT_FACTOR
 
+    @classmethod
+    def from_default(cls) -> "VAE":
+        return cls(**DEFAULT_VAE_CONFIG)
+
 
 def detect_vae_type(state_dict: dict[str, torch.Tensor]):
     if "vae.encoder.norm_out.weight" in state_dict:
