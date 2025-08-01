@@ -186,8 +186,8 @@ class Lumina2(nn.Module):
     ) -> list[Image.Image]:
         images = []
         for latent in latents:
-            image = self.decode_image(latent)
-            images.append(image)
+            image = self.decode_image(latent.unsqueeze(0))
+            images.extend(image)
 
         return images
 
@@ -265,6 +265,18 @@ class Lumina2(nn.Module):
 
         return prompts, negative_prompts, width, height
 
+    def chunk_cfg_velocity(
+        self,
+        velocity: torch.Tensor,  # nested tensor
+        batch_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        values = velocity.unbind(dim=0)
+
+        return (
+            torch.nested.as_nested_tensor(values[:batch_size]),
+            torch.nested.as_nested_tensor(values[batch_size:]),
+        )
+
     # MARK: generate
     def generate(
         self,
@@ -335,13 +347,13 @@ class Lumina2(nn.Module):
                     caption_features=prompt_embeddings,
                     timestep=timestep,
                     caption_mask=prompt_mask,
-                    prompt_feature_cache=prompt_feature_cache,
+                    cached_caption_features=prompt_feature_cache,
                 )
 
                 # perform cfg
                 if do_cfg:
                     velocity_pred_positive, velocity_pred_negative = (
-                        velocity_pred.chunk(2)
+                        self.chunk_cfg_velocity(velocity_pred, batch_size)
                     )
                     velocity_pred = velocity_pred_negative + cfg_scale * (
                         velocity_pred_positive - velocity_pred_negative
