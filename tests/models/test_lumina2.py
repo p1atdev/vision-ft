@@ -4,9 +4,12 @@ from huggingface_hub import hf_hub_download
 
 import numpy as np
 import torch
-from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
+from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
+    FlowMatchEulerDiscreteScheduler,
+)
 
 from src.models.lumina2 import Lumina2Config, DenoiserConfig, Lumina2
+from src.models.lumina2.scheduler import Scheduler
 
 
 def test_load_neta_lumina():
@@ -47,3 +50,37 @@ def test_load_neta_lumina():
 
     # assert output is not None, "Output is None"
     # assert output.shape == latent.shape, "Output shape does not match input shape"
+
+
+def test_scheduler():
+    reference = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        "Alpha-VLLM/Lumina-Image-2.0",
+        subfolder="scheduler",
+    )
+    scheduler = Scheduler()
+
+    assert reference.sigma_min == scheduler.sigma_min
+    assert reference.sigma_max == scheduler.sigma_max
+
+    num_timesteps = [1, 4, 16, 24, 25, 29, 31, 50]
+
+    for t in num_timesteps:
+        reference.set_timesteps(num_inference_steps=t)
+        ref_timesteps = reference.timesteps
+
+        timesteps = scheduler.get_timesteps(num_inference_steps=t)
+
+        assert torch.allclose(
+            ref_timesteps,  # type: ignore
+            torch.from_numpy(timesteps),
+            atol=1e-6,
+        )
+
+        ref_sigmas = reference.sigmas
+        sigmas = scheduler.get_sigmas(timesteps)
+
+        assert torch.allclose(
+            ref_sigmas,  # type: ignore
+            torch.from_numpy(sigmas),
+            atol=1e-6,
+        )
