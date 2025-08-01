@@ -44,7 +44,7 @@ DEFAULT_TEXT_ENCODER_CONFIG_CLASS = Gemma2Config
 TEXT_ENCODER_TENSOR_PREFIX = "text_encoders.gemma2_2b.transformer."
 DEFAULT_TOKENIZER_REPO = "Alpha-VLLM/Lumina-Image-2.0"
 DEFAULT_TOKENIZER_FOLDER = "tokenizer"
-DEFAULT_MAX_TOKEN_LENGTH = 512
+DEFAULT_MAX_TOKEN_LENGTH = 256
 
 
 class TextEncoder(nn.Module):
@@ -101,6 +101,7 @@ class TextEncoder(nn.Module):
             return_tensors="pt",
             max_length=max_token_length,
             padding="longest",
+            pad_to_multiple_of=8,
             truncation=True,
         )
 
@@ -117,10 +118,7 @@ class TextEncoder(nn.Module):
             text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_encodings.shape)
         )
 
-        # 5. Mask out negative prompts
-        prompt_encodings = prompt_encodings * attention_mask
-
-        # 6. Split prompts and negative prompts
+        # 5. Split prompts and negative prompts
         positive_embeddings = prompt_encodings[:prompts_len]
         negative_embeddings = prompt_encodings[prompts_len:]
 

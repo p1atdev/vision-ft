@@ -1,6 +1,7 @@
 import re
 
 
+# MARK: root
 def root_convert_from_original_key(key: str) -> str:
     # denoiser
     key = key.replace("model.diffusion_model.", "diffusion_model.", 1)
@@ -15,10 +16,29 @@ def root_convert_from_original_key(key: str) -> str:
     return key
 
 
+def root_convert_to_original_key(key: str) -> str:
+    # denoiser
+    key = key.replace("denoiser.", "model.diffusion_model.", 1)
+
+    # text_encoder
+    key = key.replace("text_encoder.", "text_encoders.gemma2_2b.transformer.", 1)
+
+    # vae
+    # key = key.replace("vae.", "vae.", 1)
+
+    return key
+
+
+# MARK: denoiser
 def denoiser_convert_from_original_key(key: str) -> str:
     return key
 
 
+def denoiser_convert_to_original_key(key: str) -> str:
+    return key
+
+
+# MARK: vae
 def vae_convert_from_original_key(key: str, num_blocks: int = 4) -> str:
     ## mid blocks
     if ".mid." in key:
@@ -123,5 +143,17 @@ def convert_from_original_key(key: str) -> str:
 
     elif key.startswith("vae."):
         key = vae_convert_from_original_key(key)
+
+    return key
+
+
+def convert_to_original_key(key: str) -> str:
+    key = root_convert_to_original_key(key)
+
+    if key.startswith("denoiser."):
+        key = denoiser_convert_to_original_key(key)
+
+    elif key.startswith("vae."):
+        key = vae_convert_to_original_key(key)
 
     return key
