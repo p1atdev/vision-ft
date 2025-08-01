@@ -79,9 +79,9 @@ class SelfAttention(nn.Module):
         self.head_dim = hidden_dim // num_heads  # 96
         self.num_repeats = num_heads // num_kv_heads  # 3
 
-        self.q_dim = num_heads * hidden_dim
-        self.k_dim = num_kv_heads * hidden_dim
-        self.v_dim = num_kv_heads * hidden_dim
+        self.q_dim = num_heads * self.head_dim
+        self.k_dim = num_kv_heads * self.head_dim
+        self.v_dim = num_kv_heads * self.head_dim
 
         self.qkv = nn.Linear(
             hidden_dim,
@@ -345,7 +345,7 @@ class TransformerBlock(nn.Module):
             return self.forward_with_adaln(
                 hidden_states,
                 freqs_cis,
-                adaln_input,
+                adaln_input=adaln_input,
                 mask=mask,
             )
 
@@ -597,22 +597,22 @@ class NextDiT(nn.Module):
 
         self.gradient_checkpointing = False
 
-    def batch_unpatchify(
+    def nested_unpatchify(
         self,
-        patches: torch.Tensor,
+        patches: torch.Tensor,  # nested tensor
         image_sizes: list[ImageSize],  # list of ImageSize
     ) -> torch.Tensor:
         images = [
             unpatchify(
                 _p,
-                latent_height=image_size.height,
-                latent_width=image_size.width,
+                latent_height=image_size.height // self.patch_size,
+                latent_width=image_size.width // self.patch_size,
                 patch_size=self.patch_size,
                 out_channels=self.out_channels,
-            ).image
+            ).image.squeeze(0)  # remove batch dim
             for (_p, image_size) in zip(patches, image_sizes)
         ]
-        return torch.cat(images, dim=0)
+        return torch.nested.as_nested_tensor(images)
 
     def patchify(self, image: torch.Tensor) -> torch.Tensor:
         return patchify(
@@ -717,7 +717,7 @@ class NextDiT(nn.Module):
         for caption_len, image in zip(caption_lens, images, strict=True):
             height, width = image.shape[-2:]
 
-            patches_list.append(self.patchify(image))
+            patches_list.append(self.patchify(image).squeeze(0))  # remove batch dim
             image_sizes.append(ImageSize(height=height, width=width))
             position_ids_list.append(
                 self.get_position_ids(
@@ -772,52 +772,59 @@ class NextDiT(nn.Module):
         _padded_features = []
         for feature in features:
             mask[:, : feature.size(0)] = True
-            # fmt: off
-            _padded_features.append(
-                F.pad(
-                    feature,
-                    (
-                        0, 0, # last dim left, right
-                        0, max_length - feature.size(0), # second last dim (seq_len) left, right
-                    ),
-                    value=0.0,
+            if max_length == feature.size(0):
+                # no padding needed
+                _padded_features.append(feature)
+            else:
+                # fmt: off
+                _padded_features.append(
+                    F.pad(
+                        feature,
+                        (
+                            0, 0, # last dim left, right
+                            0, max_length - feature.size(0), # second last dim (seq_len) left, right
+                        ),
+                        value=0.0,
+                    )
                 )
-            )
-            # fmt: on
+                # fmt: on
         padded_features = torch.stack(_padded_features, dim=0)
 
         return padded_features, mask
 
     def refine_text_features(
         self,
-        features: torch.Tensor | list[torch.Tensor],  # seq_len, hidden_dim
+        features: torch.Tensor,  # seq_len, hidden_dim
         freqs_cis: torch.Tensor,  # batch_size, seq_len, 2?
-        mask: torch.Tensor | None = None,  # batch_size, seq_len
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        caption_features, _mask = self._pad(features, freqs_cis.device)
-        caption_features = self.cap_embedder(caption_features)
-        mask = _mask if mask is None else mask
+        mask: torch.Tensor,  # batch_size, seq_len
+    ) -> torch.Tensor:
+        caption_features = self.cap_embedder(features)
 
         # refine features
         for layer in self.context_refiner:
-            caption_features = layer(caption_features, freqs_cis, mask)
+            caption_features = layer(caption_features, freqs_cis=freqs_cis, mask=mask)
 
-        return caption_features, mask
+        return caption_features
 
     def refine_image_features(
         self,
-        images: torch.Tensor | list[torch.Tensor],
+        images: torch.Tensor,
         freqs_cis: torch.Tensor,
         timestep: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        image_features, mask = self._pad(images, freqs_cis.device)
-        image_features = self.x_embedder(image_features)
+        mask: torch.Tensor,  # batch_size, num_patches
+    ) -> torch.Tensor:
+        image_features = self.x_embedder(images)
 
         # refine images
         for layer in self.noise_refiner:
-            image_features = layer(image_features, freqs_cis, mask, timestep)
+            image_features = layer(
+                image_features,
+                freqs_cis=freqs_cis,
+                adaln_input=timestep,
+                mask=mask,
+            )
 
-        return image_features, mask
+        return image_features
 
     def concat_context(
         self,
@@ -833,27 +840,27 @@ class NextDiT(nn.Module):
             device=caption_features.device,
         )
         for i in range(batch_size):
+            # (seq_len, dim), (seq_len, dim)
             caption, image = caption_features[i], image_features[i]
-            context[i, : caption.size(1)] = caption
-            context[i, caption.size(1) :] = image
+            context[i, : caption.size(0)] = caption
+            context[i, caption.size(0) : caption.size(0) + image.size(0)] = image
 
         return context
 
     def split_patches(
         self,
-        condition_lens: torch.Tensor,  # (b,)
         patches: torch.Tensor,  # (b, num_patches, dim)
+        image_position_mask: torch.Tensor,  # (b,)
     ) -> torch.Tensor:
         """
         Split patches into a list of tensors based on condition_lens.
         """
         split_patches: list[torch.Tensor] = []
 
-        for i, cond_len in enumerate(condition_lens):
-            split_patches.append(patches[i, :cond_len])
-        patches, _mask = self._pad(split_patches, patches.device)
+        for i, (p, mask) in enumerate(zip(patches, image_position_mask, strict=True)):
+            split_patches.append(p[mask])
 
-        return patches
+        return torch.nested.as_nested_tensor(split_patches)
 
     def forward(
         self,
@@ -872,6 +879,8 @@ class NextDiT(nn.Module):
             if caption_mask is not None
             else [None, None]
         )
+        assert caption_mask is not None
+
         # calculate caption lengths
         caption_lens = self.get_caption_lens(
             captions=caption_features,
@@ -904,22 +913,43 @@ class NextDiT(nn.Module):
             caption_features = cached_caption_features
 
         else:
+            # select proper caption features
+            caption_features, _ = self._pad(
+                [
+                    feat[mask]
+                    for feat, mask in zip(
+                        caption_features,
+                        caption_mask,
+                        strict=True,
+                    )
+                ],
+                caption_features[0].device,
+            )
             # select proper freqs_cis for caption features
             caption_freqs_cis, caption_mask = self._pad(
                 [freqs_cis[i, : caption_lens[i]] for i in range(len(caption_lens))],
                 freqs_cis.device,
             )
-            caption_features, caption_mask = self.refine_text_features(
+            caption_features = self.refine_text_features(
                 features=caption_features,
                 freqs_cis=caption_freqs_cis,
                 mask=caption_mask,
             )
 
         # 5. refine image features
-        patches, image_mask = self.refine_image_features(
-            images=patches_list,
-            freqs_cis=freqs_cis,
+        image_patches, image_masks = self._pad(
+            patches_list,
+            patches_list[0].device,
+        )
+        image_freqs_cis, _image_masks = self._pad(
+            [freqs_cis[i, caption_lens[i] :] for i in range(len(caption_lens))],
+            freqs_cis.device,
+        )
+        patches = self.refine_image_features(
+            images=image_patches,
+            freqs_cis=image_freqs_cis,
             timestep=timestep,
+            mask=image_masks,
         )
 
         # 5.5 concat caption and image features
@@ -936,29 +966,32 @@ class NextDiT(nn.Module):
                 context = checkpoint(  # type: ignore
                     layer,
                     context,
-                    freqs_cis,
-                    caption_features,
+                    freqs_cis=freqs_cis,
+                    adaln_input=timestep,
                     mask=overall_mask,
                 )
             else:
                 context = layer(
                     context,
-                    freqs_cis,
-                    caption_features,
+                    freqs_cis=freqs_cis,
+                    adaln_input=timestep,
                     mask=overall_mask,
                 )
 
-        # 6.5 split patches
+        # 7. final layer
+        context = self.final_layer(context, timestep)
+
+        # 7.5 split patches
+        image_position_mask = overall_mask
+        for i, caption_len in enumerate(caption_lens):
+            image_position_mask[i, :caption_len] = False
         patches = self.split_patches(
-            condition_lens=caption_lens,
             patches=context,  # (b, num_patches, dim)
+            image_position_mask=image_position_mask,
         )
 
-        # 7. final layer
-        patches = self.final_layer(patches, timestep)
-
         # 8. unpatchify
-        latents = self.batch_unpatchify(
+        latents = self.nested_unpatchify(
             patches=patches,  # type: ignore
             image_sizes=image_sizes,
         )

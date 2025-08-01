@@ -25,7 +25,13 @@ def patchify(image: torch.Tensor, patch_size: int) -> PatchifyOutput:
     Returns:
         Tensor of patches with shape (batch_size, num_vertical_patches*num_horizontal_patches, patch_size*patch_size*channels)
     """
-    batch_size, channels, height, width = image.shape
+    if image.dim() == 3:
+        batch_size = 1
+        channels, height, width = image.shape
+    elif image.dim() == 4:
+        batch_size, channels, height, width = image.shape
+    else:
+        raise ValueError("Input image must be 3D or 4D tensor")
 
     latent_height, latent_width = height // patch_size, width // patch_size
 
@@ -77,7 +83,13 @@ def unpatchify(
     Returns:
         Reconstructed image tensor with shape (batch_size, channels, height*patch_size, width*patch_size)
     """
-    batch_size, _num_patches, pxpxc = patches.shape
+    if patches.dim() == 2:
+        batch_size = 1
+        _num_patches, pxpxc = patches.shape
+    elif patches.dim() == 3:
+        batch_size, _num_patches, pxpxc = patches.shape
+    else:
+        raise ValueError("Input patches must be 2D or 3D tensor")
 
     # Reshape patches into spatial dimensions
     patches = patches.reshape(

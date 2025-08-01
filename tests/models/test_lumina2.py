@@ -28,28 +28,56 @@ def test_load_neta_lumina():
     model = Lumina2.from_checkpoint(config)
     model.to(device="cuda")
 
-    # with torch.inference_mode():
-    #     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-    #         latent = torch.randn(1, 4, 128, 128, device="cuda")
-    #         timesteps = torch.randint(0, 1000, (1,), device="cuda")
-    #         encoder_hidden_state = torch.randn(1, 77, 2048, device="cuda")
-    #         encoder_pooler_output = torch.randn(1, 1280, device="cuda")
-    #         original_size = torch.tensor([128, 128], device="cuda").unsqueeze(0)
-    #         target_size = torch.tensor([128, 128], device="cuda").unsqueeze(0)
-    #         crop_coords_top_left = torch.tensor([0, 0], device="cuda").unsqueeze(0)
+    with torch.inference_mode():
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            latent = torch.randn(1, 16, 128, 128, device="cuda")
+            timesteps = torch.randint(0, 1000, (1,), device="cuda")
+            encoder_hidden_state = torch.randn(1, 256, 2304, device="cuda")
+            caption_mask = torch.cat(
+                [
+                    torch.ones(1, 136, dtype=torch.bool, device="cuda"),
+                    torch.zeros(1, 120, dtype=torch.bool, device="cuda"),
+                ],
+                dim=1,
+            )
 
-    #         output = model.denoiser(
-    #             latents=latent,
-    #             timestep=timesteps,
-    #             encoder_hidden_states=encoder_hidden_state,
-    #             encoder_pooler_output=encoder_pooler_output,
-    #             original_size=original_size,
-    #             target_size=target_size,
-    #             crop_coords_top_left=crop_coords_top_left,
-    #         )
+            velocity, new_caption_mask, caption_features_cache = model.denoiser(
+                latents=latent,
+                caption_features=encoder_hidden_state,
+                timestep=timesteps,
+                caption_mask=caption_mask,
+                cached_caption_features=None,
+            )
 
-    # assert output is not None, "Output is None"
-    # assert output.shape == latent.shape, "Output shape does not match input shape"
+    assert velocity is not None, "Output is None"
+    print(velocity[0].shape, latent[0].shape)
+    assert all([vel.shape == lat.shape for (vel, lat) in zip(velocity, latent)]), (
+        "Output shape does not match input shape"
+    )
+
+    assert new_caption_mask.size(1) == 136  # should be truncated
+    assert caption_features_cache is not None, (
+        "Caption features cache should not be None"
+    )
+
+    # use cached caption features
+    with torch.inference_mode():
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            timesteps = timesteps + 1
+            encoder_hidden_state = torch.randn(1, 256, 2304, device="cuda")
+
+            velocity_2, new_caption_mask_2, caption_features_cache_2 = model.denoiser(
+                latents=latent,
+                caption_features=encoder_hidden_state,
+                timestep=timesteps,
+                caption_mask=new_caption_mask,
+                cached_caption_features=caption_features_cache,
+            )
+
+    assert velocity_2 is not None, "Output is None"
+    assert all(
+        not torch.allclose(v1, v2, atol=1e-5) for v1, v2 in zip(velocity, velocity_2)
+    ), "Output should change with different timesteps"
 
 
 def test_scheduler():
