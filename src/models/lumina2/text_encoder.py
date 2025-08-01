@@ -114,9 +114,7 @@ class TextEncoder(nn.Module):
         prompt_encodings = self.model(**text_inputs).last_hidden_state
 
         # 4. Get attention mask
-        attention_mask = (
-            text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_encodings.shape)
-        )
+        attention_mask = text_inputs["attention_mask"]
 
         # 5. Split prompts and negative prompts
         positive_embeddings = prompt_encodings[:prompts_len]

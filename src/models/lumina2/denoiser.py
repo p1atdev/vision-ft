@@ -147,6 +147,10 @@ class SelfAttention(nn.Module):
         k = k.unsqueeze(3).repeat(1, 1, 1, self.num_repeats, 1).flatten(2, 3)
         v = v.unsqueeze(3).repeat(1, 1, 1, self.num_repeats, 1).flatten(2, 3)
 
+        # expand mask
+        if mask is not None and mask.ndim == 2:
+            mask = mask.unsqueeze(1).unsqueeze(2)
+
         scale = math.sqrt(1 / self.head_dim)
         attn = scaled_dot_product_attention(
             # (b, seq, heads, dim) -> (b, heads, seq, dim)
@@ -770,8 +774,8 @@ class NextDiT(nn.Module):
         )
 
         _padded_features = []
-        for feature in features:
-            mask[:, : feature.size(0)] = True
+        for i, feature in enumerate(features):
+            mask[i, : feature.size(0)] = True
             if max_length == feature.size(0):
                 # no padding needed
                 _padded_features.append(feature)
@@ -802,7 +806,11 @@ class NextDiT(nn.Module):
 
         # refine features
         for layer in self.context_refiner:
-            caption_features = layer(caption_features, freqs_cis=freqs_cis, mask=mask)
+            caption_features = layer(
+                caption_features,
+                freqs_cis=freqs_cis,
+                mask=mask,
+            )
 
         return caption_features
 
@@ -864,6 +872,7 @@ class NextDiT(nn.Module):
 
     def forward(
         self,
+        # latents should be nested tensor
         latents: torch.Tensor | list[torch.Tensor],  # (b, c, h, w)
         caption_features: torch.Tensor | list[torch.Tensor],  # (b, caption_len, dim)
         timestep: torch.Tensor,  # (b, 1)
@@ -906,6 +915,9 @@ class NextDiT(nn.Module):
             position_ids_list, position_ids_list[0].device
         )
         freqs_cis = self.rope_embedder(position_ids)
+        image_position_mask = overall_mask
+        for i, caption_len in enumerate(caption_lens):
+            image_position_mask[i, :caption_len] = False
 
         # 4. refine caption features (once)
         if cached_caption_features is not None:
@@ -942,7 +954,7 @@ class NextDiT(nn.Module):
             patches_list[0].device,
         )
         image_freqs_cis, _image_masks = self._pad(
-            [freqs_cis[i, caption_lens[i] :] for i in range(len(caption_lens))],
+            [freqs_cis[i, mask] for i, mask in enumerate(image_position_mask)],
             freqs_cis.device,
         )
         patches = self.refine_image_features(
@@ -982,9 +994,6 @@ class NextDiT(nn.Module):
         context = self.final_layer(context, timestep)
 
         # 7.5 split patches
-        image_position_mask = overall_mask
-        for i, caption_len in enumerate(caption_lens):
-            image_position_mask[i, :caption_len] = False
         patches = self.split_patches(
             patches=context,  # (b, num_patches, dim)
             image_position_mask=image_position_mask,
