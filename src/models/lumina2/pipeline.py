@@ -9,23 +9,24 @@ import torch.nn as nn
 from safetensors.torch import load_file
 from accelerate import init_empty_weights
 
-from .config import LuminaImage2Config
+from .config import Lumina2Config
 from .denoiser import (
     Denoiser,
 )
 from .text_encoder import (
     TextEncoder,
 )
+from .util import convert_from_original_key
 from .vae import VAE
 from ...utils import tensor as tensor_utils
 from ...modules.quant import replace_by_prequantized_weights
 
 
-class LuminaImage2(nn.Module):
+class Lumina2(nn.Module):
     denoiser: Denoiser
     denoiser_class: type[Denoiser] = Denoiser
 
-    def __init__(self, config: LuminaImage2Config):
+    def __init__(self, config: Lumina2Config):
         super().__init__()
 
         self.config = config
@@ -43,7 +44,7 @@ class LuminaImage2(nn.Module):
         self.progress_bar = tqdm
 
     @classmethod
-    def from_config(cls, config: LuminaImage2Config) -> "LuminaImage2":
+    def from_config(cls, config: Lumina2Config) -> "Lumina2":
         return cls(config)
 
     def _from_checkpoint(
@@ -53,9 +54,9 @@ class LuminaImage2(nn.Module):
         config = self.config
         state_dict = load_file(config.checkpoint_path)
         # TODO
-        # state_dict = {
-        #     convert_from_original_key(key): value for key, value in state_dict.items()
-        # }
+        state_dict = {
+            convert_from_original_key(key): value for key, value in state_dict.items()
+        }
 
         # prepare for prequantized weights
         replace_by_prequantized_weights(self, state_dict)
@@ -91,8 +92,8 @@ class LuminaImage2(nn.Module):
     @classmethod
     def from_checkpoint(
         cls,
-        config: LuminaImage2Config,
-    ) -> "LuminaImage2":
+        config: Lumina2Config,
+    ) -> "Lumina2":
         with init_empty_weights():
             model = cls.from_config(config)
 

@@ -1,7 +1,8 @@
 ## Same as Flux's
 
+from typing import Any
+import re
 import torch
-
 
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
 
@@ -52,6 +53,18 @@ class VAE(AutoencoderKL):
     @classmethod
     def from_default(cls) -> "VAE":
         return cls(**DEFAULT_VAE_CONFIG)
+
+    def load_state_dict(
+        self, state_dict: dict[str, Any], strict: bool = True, assign: bool = False
+    ):
+        for key in list(state_dict.keys()):
+            if re.search(r".*\.to_(q|k|v|out)\.(\d+\.)?weight$", key):
+                value = state_dict[key]
+                if value.dim() == 4:
+                    # [512, 512, 1, 1] -> [512, 512]
+                    state_dict[key] = value[:, :, 0, 0]
+
+        return super().load_state_dict(state_dict, strict, assign)
 
 
 def detect_vae_type(state_dict: dict[str, torch.Tensor]):

@@ -1,1 +1,3 @@
-from .config import DenoiserConfig, LuminaImage2Config
+from .config import DenoiserConfig, Lumina2Config
+
+from .pipeline import Lumina2

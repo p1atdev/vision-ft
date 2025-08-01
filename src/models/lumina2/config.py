@@ -32,7 +32,7 @@ class DenoiserConfig(BaseModel):
     vae_channels: int = 16
 
 
-class LuminaImage2Config(BaseModel):
+class Lumina2Config(BaseModel):
     checkpoint_path: str
 
     dtype: str = "bfloat16"

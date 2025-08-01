@@ -63,6 +63,7 @@ class TimestepEmbedder(nn.Module):
         return emb
 
 
+# MARK: Self Attention
 class SelfAttention(nn.Module):
     def __init__(
         self,
@@ -84,17 +85,17 @@ class SelfAttention(nn.Module):
 
         self.qkv = nn.Linear(
             hidden_dim,
-            (num_heads + num_kv_heads + num_kv_heads) * hidden_dim,
+            (num_heads + num_kv_heads + num_kv_heads) * self.head_dim,
             bias=False,
         )
 
         self.out = nn.Linear(
-            num_heads * hidden_dim,
+            num_heads * self.head_dim,
             hidden_dim,
             bias=False,
         )
-        self.q_norm = nn.RMSNorm(hidden_dim)
-        self.k_norm = nn.RMSNorm(hidden_dim)
+        self.q_norm = nn.RMSNorm(self.head_dim)
+        self.k_norm = nn.RMSNorm(self.head_dim)
 
     def init_weights(self):
         nn.init.xavier_uniform_(self.qkv.weight)
@@ -163,6 +164,7 @@ class SelfAttention(nn.Module):
         return output
 
 
+# MARK: Feed Forward
 class FeedForward(nn.Module):
     def __init__(
         self,
@@ -210,6 +212,7 @@ class FeedForward(nn.Module):
         return hidden_states
 
 
+# MARK: Transformer Block
 class TransformerBlock(nn.Module):
     def __init__(
         self,
@@ -218,10 +221,12 @@ class TransformerBlock(nn.Module):
         num_kv_heads: int,
         multiple_of: int = 256,
         norm_eps: float = 1e-5,
+        use_adaln: bool = True,
     ):
         super().__init__()
 
         self.hidden_dim = hidden_dim
+        self.use_adaln = use_adaln
 
         self.attention = SelfAttention(
             hidden_dim=hidden_dim,
@@ -240,14 +245,15 @@ class TransformerBlock(nn.Module):
         self.attention_norm2 = nn.RMSNorm(hidden_dim, eps=norm_eps)
         self.ffn_norm2 = nn.RMSNorm(hidden_dim, eps=norm_eps)
 
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(
-                1024,
-                4 * hidden_dim,
-                bias=True,
-            ),
-        )
+        if use_adaln:
+            self.adaLN_modulation = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(
+                    1024,
+                    4 * hidden_dim,
+                    bias=True,
+                ),
+            )
 
     def init_weights(self):
         self.attention.init_weights()
@@ -257,14 +263,16 @@ class TransformerBlock(nn.Module):
         nn.init.xavier_uniform_(self.ffn_norm1.weight)
         nn.init.xavier_uniform_(self.attention_norm2.weight)
         nn.init.xavier_uniform_(self.ffn_norm2.weight)
-        for m in self.adaLN_modulation.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.zeros_(m.weight)
+
+        if self.use_adaln:
+            for m in self.adaLN_modulation.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.zeros_(m.weight)
 
     def modulate(self, tensor: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
         return tensor * (1 + scale.unsqueeze(1))
 
-    def forward(
+    def forward_with_adaln(
         self,
         hidden_states: torch.Tensor,
         freqs_cis: torch.Tensor,
@@ -299,7 +307,56 @@ class TransformerBlock(nn.Module):
 
         return hidden_states
 
+    def forward_without_adaln(
+        self,
+        hidden_states: torch.Tensor,
+        freqs_cis: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        # 1. Self-Attention
+        residual = hidden_states
+        hidden_states = self.attention_norm1(hidden_states)
+        hidden_states = self.attention(
+            hidden_states,
+            freqs_cis,
+            mask=mask,
+        )
+        hidden_states = self.attention_norm2(hidden_states)
+        hidden_states = residual + hidden_states
 
+        # 2. Feed Forward
+        residual = hidden_states
+        hidden_states = self.ffn_norm1(hidden_states)
+        hidden_states = self.feed_forward(hidden_states)
+        hidden_states = self.ffn_norm2(hidden_states)
+        hidden_states = residual + hidden_states
+
+        return hidden_states
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        freqs_cis: torch.Tensor,
+        adaln_input: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if self.use_adaln:
+            assert adaln_input is not None, "adaln_input must be provided for AdaLN"
+            return self.forward_with_adaln(
+                hidden_states,
+                freqs_cis,
+                adaln_input,
+                mask=mask,
+            )
+
+        return self.forward_without_adaln(
+            hidden_states,
+            freqs_cis,
+            mask=mask,
+        )
+
+
+# MARK: Final Layer
 class FinalLayer(nn.Module):  # AdaLN
     def __init__(
         self,
@@ -489,6 +546,7 @@ class NextDiT(nn.Module):
                     num_kv_heads=num_kv_heads,
                     multiple_of=multiple_of,
                     norm_eps=norm_eps,
+                    use_adaln=False,  # no AdaLN for context refiner
                 )
                 for _ in range(num_refiner_layers)
             ]
@@ -496,7 +554,7 @@ class NextDiT(nn.Module):
 
         # timestep embedder
         self.t_embedder = TimestepEmbedder(
-            hidden_dim=hidden_dim,
+            hidden_dim=1024,
             time_embed_dim=timestep_embed_dim,
         )
         # caption embedder
