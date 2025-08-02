@@ -145,6 +145,7 @@ class TextEncoder(nn.Module):
             DEFAULT_TOKENIZER_REPO,
             subfolder=DEFAULT_TOKENIZER_FOLDER,
             use_fast=False,  # use slow tokenizer
+            padding_side="right",
         )
 
         return cls(
