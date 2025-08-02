@@ -353,6 +353,7 @@ class Lumina2(nn.Module):
         # 4. Denoise
         # prepare refined prompt feature cache
         prompt_feature_cache: torch.Tensor | None = None
+        prompt_mask_cache: torch.Tensor | None = None
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # current_timestep is 0.0 -> 1.0
             for i, current_timestep in enumerate(timesteps):
@@ -377,19 +378,22 @@ class Lumina2(nn.Module):
                     encoder_output=encoder_output,
                     do_cfg=do_cfg_on_this_step,
                 )
+                if prompt_feature_cache is None:
+                    prompt_mask_cache = prompt_mask
                 # if we didn't cfg last step and do current step,
                 # we need to remove the cache
-                if prompt_feature_cache is not None and prompt_mask.size(
+                elif prompt_feature_cache is not None and prompt_embeddings.size(
                     0
                 ) != prompt_feature_cache.size(0):
                     prompt_feature_cache = None
+                    prompt_mask_cache = prompt_mask
 
                 # predict velocity and cache prompt features
-                velocity_pred, prompt_mask, prompt_feature_cache = self.denoiser(
+                velocity_pred, prompt_mask_cache, prompt_feature_cache = self.denoiser(
                     latents=latents_input,
                     caption_features=prompt_embeddings,
                     timestep=timestep_input,
-                    caption_mask=prompt_mask,
+                    caption_mask=prompt_mask_cache,
                     cached_caption_features=prompt_feature_cache,
                 )
 

@@ -19,6 +19,14 @@ from .config import DenoiserConfig
 DENOISER_TENSOR_PREFIX = "model.diffusion_model."
 
 
+# class LuminaRMSNorm(nn.RMSNorm):
+#     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+#         hidden_states = hidden_states * torch.rsqrt(
+#             hidden_states.float().pow(2).mean(-1, keepdim=True) + self.eps
+#         ).type_as(hidden_states)
+#         return hidden_states * self.weight
+
+
 class TimestepEmbedder(nn.Module):
     def __init__(
         self,
@@ -291,7 +299,6 @@ class TransformerBlock(nn.Module):
         ).chunk(4, dim=1)
 
         # 2. Self-Attention
-        residual = hidden_states
         attn_output = self.attention_norm1(hidden_states)
         attn_output = self.attention(
             self.modulate(attn_output, scale_attn),
@@ -299,16 +306,15 @@ class TransformerBlock(nn.Module):
             mask=mask,
         )
         attn_output = self.attention_norm2(attn_output)
-        hidden_states = residual + gate_attn.unsqueeze(1).tanh() * attn_output
+        hidden_states = hidden_states + gate_attn.unsqueeze(1).tanh() * attn_output
 
         # 3. Feed Forward
-        residual = hidden_states
         mlp_output = self.ffn_norm1(hidden_states)
         mlp_output = self.feed_forward(
             self.modulate(mlp_output, scale_mlp),
         )
         mlp_output = self.ffn_norm2(mlp_output)
-        hidden_states = residual + gate_mlp.unsqueeze(1).tanh() * mlp_output
+        hidden_states = hidden_states + gate_mlp.unsqueeze(1).tanh() * mlp_output
 
         return hidden_states
 
@@ -834,9 +840,10 @@ class NextDiT(nn.Module):
                     )
                 )
                 # fmt: on
+
         padded_features = torch.stack(_padded_features, dim=0)
 
-        return padded_features, mask
+        return padded_features, mask.bool()
 
     def refine_text_features(
         self,
@@ -918,19 +925,13 @@ class NextDiT(nn.Module):
         latents: torch.Tensor | list[torch.Tensor],  # (b, c, h, w)
         caption_features: torch.Tensor | list[torch.Tensor],  # (b, caption_len, dim)
         timestep: torch.Tensor,  # (b, 1)
-        caption_mask: (
-            torch.Tensor | list[torch.Tensor] | None
-        ) = None,  # (b, caption_len)
+        caption_mask: (torch.Tensor | list[torch.Tensor]),  # (b, caption_len)
         cached_caption_features: torch.Tensor | None = None,
     ):
         # 0. prepare inputs
         # caption_mask is now Tensor or None
-        caption_mask, _ = (
-            self._pad(caption_mask, caption_mask[0].device)
-            if caption_mask is not None
-            else [None, None]
-        )
-        assert caption_mask is not None
+        caption_mask, _ = self._pad(caption_mask, caption_mask[0].device)
+        caption_mask = caption_mask.bool()  # ensure boolean mask
 
         # calculate caption lengths
         caption_lens = self.get_caption_lens(
@@ -1016,9 +1017,6 @@ class NextDiT(nn.Module):
             caption_features=caption_features,
             image_features=patches,
         )
-
-        # print("freqs_cis", freqs_cis)
-        # print("overall_mask", overall_mask)
 
         # 6. main transformer layers
         for layer in self.layers:

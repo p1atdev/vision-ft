@@ -51,20 +51,20 @@ class Scheduler:
     ) -> torch.Tensor:
         return latent + velocity_pred * (sigma - next_sigma)
 
-    def ancestral_step(
-        self,
-        latent: torch.Tensor,
-        velocity_pred: torch.Tensor,
-        sigma: torch.Tensor,
-        next_sigma: torch.Tensor,
-    ) -> torch.Tensor:
-        # simplified up/down noise splits
-        sigma_up = torch.sqrt(next_sigma**2 * (sigma**2 - next_sigma**2) / sigma**2)
-        sigma_down = torch.sqrt(next_sigma**2 - sigma_up**2)
+    # def ancestral_step(
+    #     self,
+    #     latent: torch.Tensor,
+    #     velocity_pred: torch.Tensor,
+    #     sigma: torch.Tensor,
+    #     next_sigma: torch.Tensor,
+    # ) -> torch.Tensor:
+    #     # simplified up/down noise splits
+    #     sigma_up = torch.sqrt(next_sigma**2 * (sigma**2 - next_sigma**2) / sigma**2)
+    #     sigma_down = torch.sqrt(next_sigma**2 - sigma_up**2)
 
-        dt = sigma_down - sigma
+    #     dt = sigma_down - sigma
 
-        noise = torch.randn_like(latent) * sigma_up
-        prev_sample = latent + velocity_pred * dt + noise
+    #     noise = torch.randn_like(latent) * sigma_up
+    #     prev_sample = latent + velocity_pred * dt + noise
 
-        return prev_sample
+    #     return prev_sample
