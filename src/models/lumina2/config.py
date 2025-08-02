@@ -9,12 +9,10 @@ from ...utils.dtype import str_to_dtype
 class DenoiserConfig(BaseModel):
     in_channels: int = 16
     out_channels: int = 16
-    vec_in_dim: int = 768
-    context_in_dim: int = 4096
+
     hidden_dim: int = 2304
     caption_dim: int = 2304
     timestep_embed_dim: int = 256
-    mlp_ratio: float = 4.0
     norm_eps: float = 1e-5
 
     depth: int = 26  # DiT blocks
