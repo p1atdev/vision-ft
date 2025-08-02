@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from accelerate import init_empty_weights
 from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
 )
@@ -178,8 +179,8 @@ def test_position_ids():
     # (1, 64 + 12 * 16, 3)
     positon_ids = model.get_position_ids(
         caption_length=caption_length,
-        latent_height=height // patch_size,
-        latent_width=width // patch_size,
+        patches_height=height // patch_size,
+        patches_width=width // patch_size,
         device=device,
     ).unsqueeze(0)
 
@@ -256,3 +257,45 @@ def test_rms_norm():
         eager,
         atol=1e-6,
     ), "Functional RMS Norm does not match eager implementation"
+
+
+def test_patchify_unpachify():
+    config = DenoiserConfig()
+    with init_empty_weights():
+        model = Denoiser(config)
+
+    latents = torch.nested.as_nested_tensor(
+        [
+            torch.randn(16, 64, 128),
+            torch.randn(16, 256, 16),
+            torch.randn(16, 32, 32),
+        ]
+    )
+
+    captions = torch.randn(3, 256, 2304)
+
+    patches_list, image_sizes, _position_ids = model.dynamic_patchify(
+        captions=captions,
+        images=latents,
+    )
+
+    unpatchified = model.nested_unpatchify(
+        patches=torch.nested.as_nested_tensor(patches_list),
+        image_sizes=image_sizes,
+    )
+
+    assert torch.allclose(
+        latents[0],
+        unpatchified[0],
+        atol=1e-6,
+    )
+    assert torch.allclose(
+        latents[1],
+        unpatchified[1],
+        atol=1e-6,
+    )
+    assert torch.allclose(
+        latents[2],
+        unpatchified[2],
+        atol=1e-6,
+    )
