@@ -137,9 +137,9 @@ class Lumina2(nn.Module):
                     width=width,
                     dtype=dtype,
                     device=device,
-                    seed=seed,
+                    seed=seed + i if seed is not None else None,
                 )
-                for height, width in zip(heights, widths, strict=True)
+                for i, (height, width) in enumerate(zip(heights, widths, strict=True))
             ]
         )
         return latents
@@ -287,15 +287,15 @@ class Lumina2(nn.Module):
         new_velocity = negative + cfg_scale * (positive - negative)
 
         if renorm_cfg_scale > 0.0:
-            # TODO: Nested Tensor support
-            positive_norm = torch.norm(positive, dim=-1, keepdim=True)
-            new_norm = torch.norm(new_velocity, dim=-1, keepdim=True)
+            # vmap to support Nested Tensor
+            positive_norm = torch.vmap(torch.norm)(positive, dim=-1, keepdim=True)
+            new_norm = torch.vmap(torch.norm)(new_velocity, dim=-1, keepdim=True)
 
             max_allowed_norm = positive_norm * float(renorm_cfg_scale)
             scaling_factor = max_allowed_norm / (new_norm + 1e-6)
-            clamped_scaling = scaling_factor.clamp(max=1.0)
+            clamped_scaling = torch.vmap(torch.clamp)(scaling_factor, max=1.0)
 
-            new_velocity = new_velocity * clamped_scaling
+            new_velocity = torch.vmap(torch.mul)(new_velocity, clamped_scaling)
 
         return new_velocity
 
@@ -308,6 +308,8 @@ class Lumina2(nn.Module):
         height: int | list[int] = 768,
         num_inference_steps: int = 25,
         cfg_scale: float = 5.0,
+        renorm_cfg_scale: float = 0.0,
+        cfg_truncation_ratio: float = 1.0,
         max_token_length: int = 256,
         seed: int | None = None,
         execution_dtype: torch.dtype = torch.bfloat16,
@@ -347,10 +349,6 @@ class Lumina2(nn.Module):
             device=execution_device,
             seed=seed,
         )
-        prompt_embeddings, prompt_mask = self.prepare_encoder_hidden_states(
-            encoder_output=encoder_output,
-            do_cfg=do_cfg,
-        )
 
         # 4. Denoise
         # prepare refined prompt feature cache
@@ -358,13 +356,33 @@ class Lumina2(nn.Module):
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # current_timestep is 0.0 -> 1.0
             for i, current_timestep in enumerate(timesteps):
+                # should do cfg?
+                current_step_ratio = (i + 1) / num_inference_steps
+                do_cfg_on_this_step = (
+                    do_cfg and current_step_ratio > cfg_truncation_ratio
+                )
+
                 # expand the latents if we are doing classifier free guidance
-                latents_input = torch.cat([latents] * 2) if do_cfg else latents
+                latents_input = (
+                    torch.cat([latents] * 2) if do_cfg_on_this_step else latents
+                )
 
                 # 0.0 -> 1.0
                 timestep_input = current_timestep.repeat(batch_size).to(
                     execution_device
                 )
+
+                # prepare the prompt features
+                prompt_embeddings, prompt_mask = self.prepare_encoder_hidden_states(
+                    encoder_output=encoder_output,
+                    do_cfg=do_cfg_on_this_step,
+                )
+                # if we didn't cfg last step and do current step,
+                # we need to remove the cache
+                if prompt_feature_cache is not None and prompt_mask.size(
+                    0
+                ) != prompt_feature_cache.size(0):
+                    prompt_feature_cache = None
 
                 # predict velocity and cache prompt features
                 velocity_pred, prompt_mask, prompt_feature_cache = self.denoiser(
@@ -376,7 +394,7 @@ class Lumina2(nn.Module):
                 )
 
                 # perform cfg
-                if do_cfg:
+                if do_cfg_on_this_step:
                     velocity_pred_positive, velocity_pred_negative = (
                         self.chunk_cfg_velocity(velocity_pred, batch_size)
                     )
@@ -384,7 +402,7 @@ class Lumina2(nn.Module):
                         positive=velocity_pred_positive,
                         negative=velocity_pred_negative,
                         cfg_scale=cfg_scale,
-                        # renorm_cfg_scale=renorm_cfg_scale,
+                        renorm_cfg_scale=renorm_cfg_scale,
                     )
 
                 # denoise the latents

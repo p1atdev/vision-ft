@@ -8,7 +8,7 @@ from torch.utils.checkpoint import checkpoint
 
 from ...modules.attention import scaled_dot_product_attention
 from ...modules.timestep.embedding import get_timestep_embedding
-from ...modules.norm import FP32RMSNorm, FP32LayerNorm
+from ...modules.norm import FP32LayerNorm
 
 from .config import DenoiserConfig
 
@@ -94,8 +94,8 @@ class SelfAttention(nn.Module):
             hidden_dim,
             bias=False,
         )
-        self.q_norm = FP32RMSNorm(self.head_dim, eps=1e-6)
-        self.k_norm = FP32RMSNorm(self.head_dim, eps=1e-6)
+        self.q_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.k_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
 
     def init_weights(self):
         nn.init.xavier_uniform_(self.qkv.weight)
@@ -245,11 +245,11 @@ class TransformerBlock(nn.Module):
             multiple_of=multiple_of,
         )
 
-        self.attention_norm1 = FP32RMSNorm(hidden_dim, eps=norm_eps)
-        self.ffn_norm1 = FP32RMSNorm(hidden_dim, eps=norm_eps)
+        self.attention_norm1 = nn.RMSNorm(hidden_dim, eps=norm_eps)
+        self.ffn_norm1 = nn.RMSNorm(hidden_dim, eps=norm_eps)
 
-        self.attention_norm2 = FP32RMSNorm(hidden_dim, eps=norm_eps)
-        self.ffn_norm2 = FP32RMSNorm(hidden_dim, eps=norm_eps)
+        self.attention_norm2 = nn.RMSNorm(hidden_dim, eps=norm_eps)
+        self.ffn_norm2 = nn.RMSNorm(hidden_dim, eps=norm_eps)
 
         if use_adaln:
             self.adaLN_modulation = nn.Sequential(
@@ -292,24 +292,23 @@ class TransformerBlock(nn.Module):
 
         # 2. Self-Attention
         residual = hidden_states
-        hidden_states = self.attention_norm1(hidden_states)
-        hidden_states = self.attention(
-            self.modulate(hidden_states, scale_attn),
+        attn_output = self.attention_norm1(hidden_states)
+        attn_output = self.attention(
+            self.modulate(attn_output, scale_attn),
             freqs_cis,
             mask=mask,
         )
-        hidden_states = self.attention_norm2(hidden_states)
-
-        hidden_states = residual + gate_attn.unsqueeze(1).tanh() * hidden_states
+        attn_output = self.attention_norm2(attn_output)
+        hidden_states = residual + gate_attn.unsqueeze(1).tanh() * attn_output
 
         # 3. Feed Forward
         residual = hidden_states
-        hidden_states = self.ffn_norm1(hidden_states)
-        hidden_states = self.feed_forward(
-            self.modulate(hidden_states, scale_mlp),
+        mlp_output = self.ffn_norm1(hidden_states)
+        mlp_output = self.feed_forward(
+            self.modulate(mlp_output, scale_mlp),
         )
-        hidden_states = self.ffn_norm2(hidden_states)
-        hidden_states = residual + gate_mlp.unsqueeze(1).tanh() * hidden_states
+        mlp_output = self.ffn_norm2(mlp_output)
+        hidden_states = residual + gate_mlp.unsqueeze(1).tanh() * mlp_output
 
         return hidden_states
 
@@ -565,7 +564,7 @@ class NextDiT(nn.Module):
         )
         # caption embedder
         self.cap_embedder = nn.Sequential(
-            FP32RMSNorm(caption_dim, eps=norm_eps),
+            nn.RMSNorm(caption_dim, eps=norm_eps),
             nn.Linear(
                 caption_dim,
                 hidden_dim,
@@ -586,7 +585,7 @@ class NextDiT(nn.Module):
             ]
         )
 
-        self.norm_final = FP32RMSNorm(
+        self.norm_final = nn.RMSNorm(
             hidden_dim,
             eps=norm_eps,
         )
@@ -670,11 +669,11 @@ class NextDiT(nn.Module):
     def get_position_ids(
         self,
         caption_length: int,
-        latent_height: int,
-        latent_width: int,
+        patches_height: int,
+        patches_width: int,
         device: torch.device = torch.device("cpu"),
     ) -> torch.Tensor:
-        num_patches = latent_height * latent_width
+        num_patches = patches_height * patches_width
 
         # position_ids:
         # 0: caption indices
@@ -704,15 +703,15 @@ class NextDiT(nn.Module):
         position_ids[caption_length : caption_length + num_patches, 0] = caption_length
 
         # 1. y-axis indices
-        y_indices = torch.arange(latent_height, dtype=torch.int32, device=device)
+        y_indices = torch.arange(patches_height, dtype=torch.int32, device=device)
         position_ids[caption_length : caption_length + num_patches, 1] = (
-            y_indices.view(-1, 1).repeat(1, latent_width).flatten()
+            y_indices.view(-1, 1).repeat(1, patches_width).flatten()
         )
 
         # 2. x-axis indices
-        x_indices = torch.arange(latent_width, dtype=torch.int32, device=device)
+        x_indices = torch.arange(patches_width, dtype=torch.int32, device=device)
         position_ids[caption_length : caption_length + num_patches, 2] = (
-            x_indices.view(1, -1).repeat(latent_height, 1).flatten()
+            x_indices.view(1, -1).repeat(patches_height, 1).flatten()
         )
 
         return position_ids
@@ -769,8 +768,8 @@ class NextDiT(nn.Module):
             position_ids_list.append(
                 self.get_position_ids(
                     caption_length=caption_len,
-                    latent_height=height // self.patch_size,
-                    latent_width=width // self.patch_size,
+                    patches_height=height // self.patch_size,
+                    patches_width=width // self.patch_size,
                     device=image.device,
                 )
             )

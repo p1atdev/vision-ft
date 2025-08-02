@@ -4,6 +4,8 @@ from huggingface_hub import hf_hub_download
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+
 from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
 )
@@ -213,3 +215,44 @@ def test_position_ids():
     assert torch.equal(positon_ids, reference), (
         "Position IDs do not match reference implementation"
     )
+
+
+# this test fails
+def test_rms_norm():
+    hidden_states = torch.randn(2, 256, 128, dtype=torch.float16)
+    normalized_shape = (128,)
+    weight = torch.randn(normalized_shape, dtype=torch.float16)
+    eps = 1e-6
+
+    # original implementation
+    def eager_rms_norm(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        eps=1e-6,
+    ):
+        dtype = x.dtype
+        x = x.float()
+        x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+        # official implements:
+        output = x.to(dtype) * weight  # precision drops
+        # maybe should be:
+        # output = (x * weight).to(dtype)
+        return output
+
+    functional = F.rms_norm(
+        hidden_states.to(torch.float32),
+        normalized_shape,
+        weight=weight,
+        eps=eps,
+    ).to(hidden_states.dtype)
+
+    eager = eager_rms_norm(hidden_states, weight, eps)
+
+    print("Functional RMS Norm:", functional)
+    print("Eager RMS Norm:", eager)
+
+    assert torch.allclose(
+        functional,
+        eager,
+        atol=1e-6,
+    ), "Functional RMS Norm does not match eager implementation"
