@@ -10,6 +10,7 @@ from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
 
 from src.models.lumina2 import Lumina2Config, DenoiserConfig, Lumina2
 from src.models.lumina2.scheduler import Scheduler
+from src.models.lumina2.denoiser import Denoiser
 
 
 def test_scheduler():
@@ -159,3 +160,56 @@ def test_generate_neta_lumina():
         temp_file = os.path.join(temp_file, "lumina2.webp")
         images[0].save(temp_file)
         print(f"Image saved to {temp_file}")
+
+
+def test_position_ids():
+    device = torch.device("cpu")
+    caption_length = 64
+    patch_size = 2
+    height = 12
+    width = 16
+
+    config = DenoiserConfig()
+    model = Denoiser(config)
+    model.to_empty(device="cpu")
+
+    # (1, 64 + 12 * 16, 3)
+    positon_ids = model.get_position_ids(
+        caption_length=caption_length,
+        latent_height=height // patch_size,
+        latent_width=width // patch_size,
+        device=device,
+    ).unsqueeze(0)
+
+    # reference implementation
+    batch_size = 1
+    max_seq_len = caption_length + (height // patch_size) * (width // patch_size)
+
+    reference = torch.zeros(
+        batch_size, max_seq_len, 3, dtype=torch.int32, device=device
+    )
+    H_tokens, W_tokens = height // patch_size, width // patch_size
+    img_len = H_tokens * W_tokens
+
+    reference[0, :caption_length, 0] = torch.arange(
+        caption_length, dtype=torch.int32, device=device
+    )
+    reference[0, caption_length : caption_length + img_len, 0] = caption_length
+    row_ids = (
+        torch.arange(H_tokens, dtype=torch.int32, device=device)
+        .view(-1, 1)
+        .repeat(1, W_tokens)
+        .flatten()
+    )
+    col_ids = (
+        torch.arange(W_tokens, dtype=torch.int32, device=device)
+        .view(1, -1)
+        .repeat(H_tokens, 1)
+        .flatten()
+    )
+    reference[0, caption_length : caption_length + img_len, 1] = row_ids
+    reference[0, caption_length : caption_length + img_len, 2] = col_ids
+
+    assert torch.equal(positon_ids, reference), (
+        "Position IDs do not match reference implementation"
+    )
