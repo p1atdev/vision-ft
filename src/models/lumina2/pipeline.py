@@ -1,9 +1,8 @@
 from tqdm import tqdm
 from PIL import Image
-import warnings
 
+import numpy as np
 import torch
-from torch._tensor import Tensor
 import torch.nn as nn
 
 from safetensors.torch import load_file
@@ -362,14 +361,16 @@ class Lumina2(nn.Module):
                 # expand the latents if we are doing classifier free guidance
                 latents_input = torch.cat([latents] * 2) if do_cfg else latents
 
-                # invert the timesteps to match the order of the original scheduler
-                timestep = current_timestep.repeat(batch_size).to(execution_device)
+                # 0.0 -> 1.0
+                timestep_input = current_timestep.repeat(batch_size).to(
+                    execution_device
+                )
 
                 # predict velocity and cache prompt features
                 velocity_pred, prompt_mask, prompt_feature_cache = self.denoiser(
                     latents=latents_input,
                     caption_features=prompt_embeddings,
-                    timestep=timestep,
+                    timestep=timestep_input,
                     caption_mask=prompt_mask,
                     cached_caption_features=prompt_feature_cache,
                 )
@@ -390,7 +391,7 @@ class Lumina2(nn.Module):
                 current_sigma, next_sigma = sigmas[i], sigmas[i + 1]
                 latents = self.scheduler.step(
                     latent=latents,
-                    velocity_pred=-velocity_pred,
+                    velocity_pred=velocity_pred,
                     sigma=current_sigma,
                     next_sigma=next_sigma,
                 )

@@ -8,7 +8,7 @@ from torch.utils.checkpoint import checkpoint
 
 from ...modules.attention import scaled_dot_product_attention
 from ...modules.timestep.embedding import get_timestep_embedding
-from ...modules.patch import patchify, unpatchify
+from ...modules.norm import FP32RMSNorm, FP32LayerNorm
 
 from .config import DenoiserConfig
 
@@ -94,8 +94,8 @@ class SelfAttention(nn.Module):
             hidden_dim,
             bias=False,
         )
-        self.q_norm = nn.RMSNorm(self.head_dim)
-        self.k_norm = nn.RMSNorm(self.head_dim)
+        self.q_norm = FP32RMSNorm(self.head_dim, eps=1e-6)
+        self.k_norm = FP32RMSNorm(self.head_dim, eps=1e-6)
 
     def init_weights(self):
         nn.init.xavier_uniform_(self.qkv.weight)
@@ -149,7 +149,9 @@ class SelfAttention(nn.Module):
 
         # expand mask
         if mask is not None and mask.ndim == 2:
-            mask = mask.unsqueeze(1).unsqueeze(2)
+            mask = mask.view(batch_size, 1, 1, seq_len).expand(
+                -1, self.num_heads, seq_len, -1
+            )
 
         scale = math.sqrt(1 / self.head_dim)
         attn = scaled_dot_product_attention(
@@ -243,11 +245,11 @@ class TransformerBlock(nn.Module):
             multiple_of=multiple_of,
         )
 
-        self.attention_norm1 = nn.RMSNorm(hidden_dim, eps=norm_eps)
-        self.ffn_norm1 = nn.RMSNorm(hidden_dim, eps=norm_eps)
+        self.attention_norm1 = FP32RMSNorm(hidden_dim, eps=norm_eps)
+        self.ffn_norm1 = FP32RMSNorm(hidden_dim, eps=norm_eps)
 
-        self.attention_norm2 = nn.RMSNorm(hidden_dim, eps=norm_eps)
-        self.ffn_norm2 = nn.RMSNorm(hidden_dim, eps=norm_eps)
+        self.attention_norm2 = FP32RMSNorm(hidden_dim, eps=norm_eps)
+        self.ffn_norm2 = FP32RMSNorm(hidden_dim, eps=norm_eps)
 
         if use_adaln:
             self.adaLN_modulation = nn.Sequential(
@@ -374,7 +376,7 @@ class FinalLayer(nn.Module):  # AdaLN
         self.patch_size = patch_size
         self.out_channels = out_channels
 
-        self.norm_final = nn.LayerNorm(
+        self.norm_final = FP32LayerNorm(
             hidden_dim,
             elementwise_affine=False,
             eps=1e-6,
@@ -563,7 +565,7 @@ class NextDiT(nn.Module):
         )
         # caption embedder
         self.cap_embedder = nn.Sequential(
-            nn.RMSNorm(caption_dim, eps=norm_eps),
+            FP32RMSNorm(caption_dim, eps=norm_eps),
             nn.Linear(
                 caption_dim,
                 hidden_dim,
@@ -584,7 +586,7 @@ class NextDiT(nn.Module):
             ]
         )
 
-        self.norm_final = nn.RMSNorm(
+        self.norm_final = FP32RMSNorm(
             hidden_dim,
             eps=norm_eps,
         )
@@ -601,28 +603,69 @@ class NextDiT(nn.Module):
 
         self.gradient_checkpointing = False
 
+    # Lumina2's patchify and unpatchify are different from other DiT models.
+    def patchify(self, image: torch.Tensor) -> torch.Tensor:
+        channels, height, width = image.size()
+
+        latent_height, latent_width = (
+            height // self.patch_size,
+            width // self.patch_size,
+        )
+
+        patches = image.view(
+            channels,
+            latent_height,
+            self.patch_size,
+            latent_width,
+            self.patch_size,
+        )
+
+        # (c, h, p_h, w, p_w) -> (h, w, p_h, p_w, c)
+        patches = patches.permute(1, 3, 2, 4, 0)
+
+        # (h, w, p_h, p_w, c) -> (h * w, p_h * p_w * c)
+        patches = patches.flatten(2).flatten(0, 1)
+
+        return patches
+
+    def unpatchify(
+        self,
+        patches: torch.Tensor,
+        latent_height: int,
+        latent_width: int,
+        patch_size: int = 2,
+        out_channels: int = 16,
+    ) -> torch.Tensor:
+        # (h * w, p_h * p_w * c) -> (h, w, p_h, p_w, c)
+        patches = patches.reshape(
+            latent_height // patch_size,
+            latent_width // patch_size,
+            patch_size,
+            patch_size,
+            out_channels,
+        )
+
+        # (h, w, p_h, p_w, c) -> (c, h * p_h, w * p_w)
+        patches = patches.permute(4, 0, 2, 1, 3).flatten(3, 4).flatten(1, 2)
+
+        return patches
+
     def nested_unpatchify(
         self,
         patches: torch.Tensor,  # nested tensor
         image_sizes: list[ImageSize],  # list of ImageSize
     ) -> torch.Tensor:
         images = [
-            unpatchify(
+            self.unpatchify(
                 _p,
-                latent_height=image_size.height // self.patch_size,
-                latent_width=image_size.width // self.patch_size,
+                latent_height=image_size.height,
+                latent_width=image_size.width,
                 patch_size=self.patch_size,
                 out_channels=self.out_channels,
-            ).image.squeeze(0)  # remove batch dim
+            )
             for (_p, image_size) in zip(patches, image_sizes)
         ]
         return torch.nested.as_nested_tensor(images)
-
-    def patchify(self, image: torch.Tensor) -> torch.Tensor:
-        return patchify(
-            image,
-            patch_size=self.patch_size,
-        ).patches
 
     def get_position_ids(
         self,
@@ -721,7 +764,7 @@ class NextDiT(nn.Module):
         for caption_len, image in zip(caption_lens, images, strict=True):
             height, width = image.shape[-2:]
 
-            patches_list.append(self.patchify(image).squeeze(0))  # remove batch dim
+            patches_list.append(self.patchify(image))  # remove batch dim
             image_sizes.append(ImageSize(height=height, width=width))
             position_ids_list.append(
                 self.get_position_ids(
@@ -915,7 +958,7 @@ class NextDiT(nn.Module):
             position_ids_list, position_ids_list[0].device
         )
         freqs_cis = self.rope_embedder(position_ids)
-        image_position_mask = overall_mask
+        image_position_mask = overall_mask.clone()  # do not share
         for i, caption_len in enumerate(caption_lens):
             image_position_mask[i, :caption_len] = False
 
@@ -942,6 +985,7 @@ class NextDiT(nn.Module):
                 [freqs_cis[i, : caption_lens[i]] for i in range(len(caption_lens))],
                 freqs_cis.device,
             )
+            # print("caption_freqs_cis", caption_freqs_cis)
             caption_features = self.refine_text_features(
                 features=caption_features,
                 freqs_cis=caption_freqs_cis,
@@ -957,6 +1001,8 @@ class NextDiT(nn.Module):
             [freqs_cis[i, mask] for i, mask in enumerate(image_position_mask)],
             freqs_cis.device,
         )
+        # print("image_masks", image_masks)
+        # print("image_freqs_cis", image_freqs_cis)
         patches = self.refine_image_features(
             images=image_patches,
             freqs_cis=image_freqs_cis,
@@ -971,6 +1017,9 @@ class NextDiT(nn.Module):
             caption_features=caption_features,
             image_features=patches,
         )
+
+        # print("freqs_cis", freqs_cis)
+        # print("overall_mask", overall_mask)
 
         # 6. main transformer layers
         for layer in self.layers:
