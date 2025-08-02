@@ -17,6 +17,16 @@ class FP32LayerNorm(nn.LayerNorm):
         ).to(hidden_states.dtype)
 
 
+class FP32RMSNorm(nn.RMSNorm):
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return F.rms_norm(
+            hidden_states.to(torch.float32),
+            self.normalized_shape,
+            weight=self.weight,
+            eps=self.eps,
+        ).to(hidden_states.dtype)
+
+
 class SingleAdaLayerNormZeroOutput(NamedTuple):
     hidden_states: torch.Tensor
     scale: torch.Tensor
