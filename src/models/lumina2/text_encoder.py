@@ -111,7 +111,9 @@ class TextEncoder(nn.Module):
         }
 
         # 3. Encode prompts
-        prompt_encodings = self.model(**text_inputs).last_hidden_state
+        prompt_encodings = self.model(
+            **text_inputs, output_hidden_states=True
+        ).hidden_states[-2]  # penultimate
 
         # 4. Get attention mask
         attention_mask = text_inputs["attention_mask"]
