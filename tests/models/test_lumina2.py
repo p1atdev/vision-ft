@@ -19,16 +19,17 @@ def test_scheduler():
     )
     scheduler = Scheduler()
 
-    assert reference.sigma_min == scheduler.sigma_min
-    assert reference.sigma_max == scheduler.sigma_max
-
     num_timesteps = [1, 4, 16, 24, 25, 29, 31, 50]
 
-    for t in num_timesteps:
-        reference.set_timesteps(num_inference_steps=t)
-        ref_timesteps = reference.timesteps
+    for num_steps in num_timesteps:
+        _sigmas = scheduler._calculate_sigma(num_steps)
 
-        timesteps = scheduler.get_timesteps(num_inference_steps=t)
+        # check timesteps
+        reference.set_timesteps(sigmas=_sigmas)  # type: ignore
+        ref_timesteps = reference.timesteps
+        ref_timesteps = 1 - ref_timesteps / reference.num_train_timesteps
+
+        timesteps = scheduler.get_timesteps(num_inference_steps=num_steps)
 
         assert torch.allclose(
             ref_timesteps,  # type: ignore
@@ -36,8 +37,9 @@ def test_scheduler():
             atol=1e-6,
         )
 
+        # sigmas
         ref_sigmas = reference.sigmas
-        sigmas = scheduler.get_sigmas(timesteps)
+        sigmas = scheduler.get_sigmas(num_steps)
 
         assert torch.allclose(
             ref_sigmas,  # type: ignore

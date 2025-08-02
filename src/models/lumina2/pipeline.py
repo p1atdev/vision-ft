@@ -195,7 +195,7 @@ class Lumina2(nn.Module):
         self, num_inference_steps: int, device: torch.device
     ) -> tuple[torch.Tensor, torch.Tensor]:
         timesteps = self.scheduler.get_timesteps(num_inference_steps)
-        sigmas = self.scheduler.get_sigmas(timesteps)
+        sigmas = self.scheduler.get_sigmas(num_inference_steps)
 
         return (
             torch.from_numpy(timesteps).to(device),
@@ -277,6 +277,29 @@ class Lumina2(nn.Module):
             torch.nested.as_nested_tensor(values[batch_size:]),
         )
 
+    def renorm_cfg(
+        self,
+        positive: torch.Tensor,
+        negative: torch.Tensor,
+        cfg_scale: float,
+        renorm_cfg_scale: float = 0.0,
+    ) -> torch.Tensor:
+        # CFG
+        new_velocity = negative + cfg_scale * (positive - negative)
+
+        if renorm_cfg_scale > 0.0:
+            # TODO: Nested Tensor support
+            positive_norm = torch.norm(positive, dim=-1, keepdim=True)
+            new_norm = torch.norm(new_velocity, dim=-1, keepdim=True)
+
+            max_allowed_norm = positive_norm * float(renorm_cfg_scale)
+            scaling_factor = max_allowed_norm / (new_norm + 1e-6)
+            clamped_scaling = scaling_factor.clamp(max=1.0)
+
+            new_velocity = new_velocity * clamped_scaling
+
+        return new_velocity
+
     # MARK: generate
     def generate(
         self,
@@ -334,11 +357,12 @@ class Lumina2(nn.Module):
         # prepare refined prompt feature cache
         prompt_feature_cache: torch.Tensor | None = None
         with self.progress_bar(total=num_inference_steps) as progress_bar:
-            # current_timestep is 1000.0 -> 1.0
+            # current_timestep is 0.0 -> 1.0
             for i, current_timestep in enumerate(timesteps):
                 # expand the latents if we are doing classifier free guidance
                 latents_input = torch.cat([latents] * 2) if do_cfg else latents
 
+                # invert the timesteps to match the order of the original scheduler
                 timestep = current_timestep.repeat(batch_size).to(execution_device)
 
                 # predict velocity and cache prompt features
@@ -355,15 +379,18 @@ class Lumina2(nn.Module):
                     velocity_pred_positive, velocity_pred_negative = (
                         self.chunk_cfg_velocity(velocity_pred, batch_size)
                     )
-                    velocity_pred = velocity_pred_negative + cfg_scale * (
-                        velocity_pred_positive - velocity_pred_negative
+                    velocity_pred = self.renorm_cfg(
+                        positive=velocity_pred_positive,
+                        negative=velocity_pred_negative,
+                        cfg_scale=cfg_scale,
+                        # renorm_cfg_scale=renorm_cfg_scale,
                     )
 
                 # denoise the latents
                 current_sigma, next_sigma = sigmas[i], sigmas[i + 1]
                 latents = self.scheduler.step(
                     latent=latents,
-                    velocity_pred=velocity_pred,
+                    velocity_pred=-velocity_pred,
                     sigma=current_sigma,
                     next_sigma=next_sigma,
                 )

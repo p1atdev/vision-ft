@@ -9,48 +9,35 @@ class Scheduler:
 
     shift: float = 6.0
     num_train_timesteps: int = 1000
-    max_shift: float = 1.5
 
+    # unused?
     base_shift: float = 0.5
+    max_shift: float = 1.15
     base_image_seq_len: int = 256
     max_image_seq_len: int = 4096
 
-    def __init__(self):
-        timesteps = np.linspace(
-            1,
-            self.num_train_timesteps,
-            self.num_train_timesteps,
-            dtype=np.float32,
-        )[::-1]
-
-        sigmas = self._calculate_sigma(timesteps)
-
-        self.sigma_min = sigmas[-1].item()
-        self.sigma_max = sigmas[0].item()
-
-    def sigma_to_timestep(self, sigma: np.ndarray) -> np.ndarray:
-        return sigma * self.num_train_timesteps
-
     def get_timesteps(self, num_inference_steps: int) -> np.ndarray:
-        timesteps = np.linspace(
-            self.sigma_to_timestep(self.sigma_max),
-            self.sigma_to_timestep(self.sigma_min),
-            num_inference_steps,
-            dtype=np.float32,
-        )
-        sigmas = self._calculate_sigma(timesteps)
-        timesteps = sigmas * self.num_train_timesteps
+        sigmas = self._calculate_sigma(num_inference_steps)
+        sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
+
+        # Lumina2 uses 0.0 -> 1.0 timesteps
+        timesteps = 1 - sigmas
 
         return timesteps
 
-    def _calculate_sigma(self, timesteps: np.ndarray) -> np.ndarray:
-        sigmas = timesteps / self.num_train_timesteps
-        sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
+    def _calculate_sigma(self, num_inference_steps: int) -> np.ndarray:
+        sigmas = np.linspace(
+            1.0,
+            1 / num_inference_steps,
+            num_inference_steps,
+            dtype=np.float32,
+        )
 
         return sigmas
 
-    def get_sigmas(self, timesteps: np.ndarray) -> np.ndarray:
-        sigmas = timesteps / self.num_train_timesteps
+    def get_sigmas(self, num_inference_steps: int) -> np.ndarray:
+        sigmas = self._calculate_sigma(num_inference_steps)
+        sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
         sigmas = np.concat([sigmas, [0]]).astype(np.float32)
 
         return sigmas
