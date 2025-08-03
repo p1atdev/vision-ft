@@ -54,7 +54,6 @@ class TimestepEmbedder(nn.Module):
             self.time_embed_dim,
             flip_sin_to_cos=True,
             downscale_freq_shift=0,
-            scale=10000,
         )
 
         # apply MLP
