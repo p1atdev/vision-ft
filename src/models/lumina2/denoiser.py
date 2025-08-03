@@ -19,14 +19,6 @@ from .config import DenoiserConfig
 DENOISER_TENSOR_PREFIX = "model.diffusion_model."
 
 
-# class LuminaRMSNorm(nn.RMSNorm):
-#     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-#         hidden_states = hidden_states * torch.rsqrt(
-#             hidden_states.float().pow(2).mean(-1, keepdim=True) + self.eps
-#         ).type_as(hidden_states)
-#         return hidden_states * self.weight
-
-
 class TimestepEmbedder(nn.Module):
     def __init__(
         self,
@@ -66,7 +58,7 @@ class TimestepEmbedder(nn.Module):
         )
 
         # apply MLP
-        emb = self.mlp(emb)
+        emb: torch.Tensor = self.mlp(emb.float())
 
         return emb
 
@@ -157,8 +149,10 @@ class SelfAttention(nn.Module):
 
         # expand mask
         if mask is not None and mask.ndim == 2:
-            mask = mask.view(batch_size, 1, 1, seq_len).expand(
-                -1, self.num_heads, seq_len, -1
+            mask = (
+                mask.bool()
+                .view(batch_size, 1, 1, seq_len)
+                .expand(-1, self.num_heads, seq_len, -1)
             )
 
         scale = math.sqrt(1 / self.head_dim)
@@ -282,6 +276,7 @@ class TransformerBlock(nn.Module):
             for m in self.adaLN_modulation.modules():
                 if isinstance(m, nn.Linear):
                     nn.init.zeros_(m.weight)
+                    nn.init.zeros_(m.bias)
 
     def modulate(self, tensor: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
         return tensor * (1 + scale.unsqueeze(1))
@@ -409,6 +404,7 @@ class FinalLayer(nn.Module):  # AdaLN
         for m in self.adaLN_modulation.modules():
             if isinstance(m, nn.Linear):
                 nn.init.zeros_(m.weight)
+                nn.init.zeros_(m.bias)
 
     def modulate(self, tensor: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
         return tensor * (1 + scale.unsqueeze(1))
@@ -435,8 +431,8 @@ class RoPEEmbedder:
     def __init__(
         self,
         theta: float = 10000.0,
-        axes_dims: list[int] = [16, 56, 56],
-        axes_lens: list[int] = [1, 512, 512],
+        axes_dims: list[int] = [32, 32, 32],
+        axes_lens: list[int] = [300, 512, 512],
     ):
         super().__init__()
         self.theta = theta
@@ -525,6 +521,8 @@ class NextDiT(nn.Module):
         self.in_channels = in_channels
         self.out_channels = in_channels
         self.patch_size = patch_size
+
+        self.hidden_dim = hidden_dim
 
         self.axes_dims = axes_dims
         self.axes_lens = axes_lens
