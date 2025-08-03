@@ -101,7 +101,6 @@ class TextEncoder(nn.Module):
             return_tensors="pt",
             max_length=max_token_length,
             padding="longest",
-            # pad_to_multiple_of=8,
             truncation=True,
         )
 
