@@ -288,8 +288,12 @@ class Lumina2(nn.Module):
 
         if renorm_cfg_scale > 0.0:
             # vmap to support Nested Tensor
-            positive_norm = torch.vmap(torch.norm)(positive, dim=-1, keepdim=True)
-            new_norm = torch.vmap(torch.norm)(new_velocity, dim=-1, keepdim=True)
+            positive_norm = torch.vmap(torch.linalg.vector_norm)(
+                positive, dim=-1, keepdim=True
+            )
+            new_norm = torch.vmap(torch.linalg.vector_norm)(
+                new_velocity, dim=-1, keepdim=True
+            )
 
             max_allowed_norm = positive_norm * float(renorm_cfg_scale)
             scaling_factor = max_allowed_norm / (new_norm + 1e-6)
