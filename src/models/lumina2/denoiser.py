@@ -884,7 +884,9 @@ class NextDiT(nn.Module):
         self,
         max_length: int,
         caption_features: torch.Tensor,  # (b, caption_len, dim)
+        caption_mask: torch.Tensor,  # (b, caption_len)
         image_features: torch.Tensor,  # (b, num_patches, dim)
+        image_mask: torch.Tensor,  # (b, num_patches)
     ) -> torch.Tensor:
         batch_size, _, dim = caption_features.size()
 
@@ -896,8 +898,14 @@ class NextDiT(nn.Module):
         for i in range(batch_size):
             # (seq_len, dim), (seq_len, dim)
             caption, image = caption_features[i], image_features[i]
-            context[i, : caption.size(0)] = caption
-            context[i, caption.size(0) : caption.size(0) + image.size(0)] = image
+            caption_len, image_len = (
+                caption_mask[i].sum().item(),
+                image_mask[i].sum().item(),
+            )
+            context[i, :caption_len] = caption[:caption_len]  # (caption_len, dim)
+            context[i, caption_len : caption_len + image_len] = image[
+                :image_len
+            ]  # (image_len, dim)
 
         return context
 
@@ -1012,7 +1020,9 @@ class NextDiT(nn.Module):
         context: torch.Tensor = self.concat_context(
             max_length=max_length,
             caption_features=caption_features,
+            caption_mask=caption_mask,
             image_features=patches,
+            image_mask=image_masks,
         )
 
         # 6. main transformer layers

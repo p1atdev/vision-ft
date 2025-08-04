@@ -2,9 +2,10 @@ import os
 import tempfile
 from huggingface_hub import hf_hub_download
 
-import numpy as np
+
 import torch
 import torch.nn.functional as F
+
 
 from accelerate import init_empty_weights
 from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
@@ -13,7 +14,9 @@ from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
 
 from src.models.lumina2 import Lumina2Config, DenoiserConfig, Lumina2
 from src.models.lumina2.scheduler import Scheduler
-from src.models.lumina2.denoiser import Denoiser
+from src.models.lumina2.denoiser import (
+    Denoiser,
+)
 
 
 def test_scheduler():
@@ -76,23 +79,22 @@ def test_load_neta_lumina():
             caption_mask = torch.stack(
                 [
                     # positive prompt
-                    torch.cat(
-                        [
-                            torch.ones(64, dtype=torch.bool, device="cuda"),
-                            torch.zeros(16, dtype=torch.bool, device="cuda"),
-                        ],
-                    ),
+                    torch.ones(80, dtype=torch.bool, device="cuda"),
                     # negative prompt
                     torch.cat(
                         [
-                            torch.ones(25, dtype=torch.bool, device="cuda"),
-                            torch.zeros(55, dtype=torch.bool, device="cuda"),
+                            torch.ones(32, dtype=torch.bool, device="cuda"),
+                            torch.zeros(48, dtype=torch.bool, device="cuda"),
                         ],
                     ),
                 ]
             )
 
             velocity, new_caption_mask, caption_features_cache = model.denoiser(
+                # latent,
+                # timesteps,
+                # encoder_hidden_state,
+                # caption_mask,
                 latents=latent,
                 caption_features=encoder_hidden_state,
                 timestep=timesteps,
@@ -106,7 +108,7 @@ def test_load_neta_lumina():
         "Output shape does not match input shape"
     )
 
-    assert new_caption_mask.size(1) == 64  # should be truncated
+    assert new_caption_mask.size(1) == 80
     assert caption_features_cache is not None, (
         "Caption features cache should not be None"
     )
