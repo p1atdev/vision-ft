@@ -17,13 +17,21 @@ from src.modules.loss.flow_match import (
     prepare_noised_latents,
     loss_with_predicted_velocity,
 )
-from src.modules.timestep.sampling import uniform_randint
+from src.modules.timestep.sampling import (
+    uniform_rand,
+    shift_sigmoid_randn,
+    shift_uniform_rand,
+)
 from src.modules.peft import get_adapter_parameters
 from src.utils.logging import wandb_image
+
+torch._dynamo.config.capture_scalar_outputs = True  # type: ignore
 
 
 class Lumina2ForTextToImageTrainingConfig(Lumina2Config):
     max_token_length: int = 256
+
+    timestep_shift: float = 6.0
 
 
 class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
@@ -93,11 +101,11 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             )
 
             latents = self.model.encode_image(pixel_values)
-            timesteps = uniform_randint(  # shifted timesteps?
+            # 0.0 ~ 1.0
+            timesteps = shift_uniform_rand(  # shifted timesteps?
                 latents_shape=latents.shape,
                 device=self.accelerator.device,
-                min_timesteps=0,
-                max_timesteps=1000,  # change this for addift?
+                shift=self.model_config.timestep_shift,
             )
 
         # 2. Prepare the noised latents
@@ -119,7 +127,9 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             latents=latents,
             random_noise=random_noise,
             # actually no padding, just convert to normal tensor
-            predicted_velocity=to_padded_tensor(velocity_pred, padding=0.0),
+            predicted_velocity=-to_padded_tensor(
+                velocity_pred, padding=0.0
+            ),  # inverted
         )
         total_loss = l2_loss
 

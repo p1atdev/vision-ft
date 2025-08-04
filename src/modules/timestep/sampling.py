@@ -88,6 +88,22 @@ def uniform_rand(
     return timesteps
 
 
+def shift_uniform_rand(
+    latents_shape: torch.Size,
+    device: torch.device,
+    shift: float = 6.0,
+):
+    """
+    Shift the uniform random values to the range [0, shift].
+    """
+    batch_size, _channels, _height, _width = latents_shape
+
+    timesteps = torch.rand(batch_size, device=device)
+    timesteps = (timesteps * shift) / (1 + (shift - 1) * timesteps)
+
+    return timesteps
+
+
 TimestepSamplingType = Literal["shift_sigmoid", "flux_shift", "sigmoid", "uniform"]
 
 

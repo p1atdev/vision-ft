@@ -669,6 +669,7 @@ class NextDiT(nn.Module):
         ]
         return torch.nested.as_nested_tensor(images)
 
+    @torch.no_grad
     def get_position_ids(
         self,
         caption_length: int,
@@ -719,6 +720,7 @@ class NextDiT(nn.Module):
 
         return position_ids
 
+    @torch.no_grad
     def get_caption_lens(
         self,
         captions: torch.Tensor | list[torch.Tensor],  # batch_size?, caption_length, dim
@@ -734,6 +736,7 @@ class NextDiT(nn.Module):
 
         return torch.tensor(caption_lens, dtype=torch.int32, device=captions[0].device)
 
+    @torch.no_grad
     def get_image_lens(
         self,
         images: (
