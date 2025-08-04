@@ -1,0 +1,16 @@
+- prompt: |-
+    You are an assistant designed to generate anime images based on textual prompts. <Prompt Start>
+    neta, 1girl, solo, bangs, black hair, purple eyes, multicolored hair,
+    virtual youtuber, hair bun, streaked hair, double bun, school uniform, white shirt, pleated skirt,
+    gentle smile, looking at viewer, sitting, upper body, close-up, soft lighting, depth of field,
+    cherry blossom background, warm lighting, best quality
+  negative_prompt: |-
+    You are an assistant designed to generate low-quality images based on textual prompts <Prompt Start>
+    blurry, worst quality, low quality, deformed hands, bad anatomy,
+    extra limbs, poorly drawn face, mutated, extra eyes, bad proportions
+  height: 1024
+  width: 1024
+  cfg_scale: 5.0
+  num_steps: 20
+
+  seed: 0

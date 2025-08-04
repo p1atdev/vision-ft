@@ -1,0 +1,89 @@
+model:
+  checkpoint_path: "./models/neta-lumina-v1.0-AIO.bnb_nf4.safetensors"
+
+  dtype: bfloat16
+
+  # denoiser:
+
+peft:
+  config:
+    type: lora
+    rank: 4
+    alpha: 1.0
+    dropout: 0.0
+
+    dtype: bfloat16
+
+  include_keys:
+    - "attention"
+    - "feed_forward"
+    # - "adaLN_modulation"
+  exclude_keys: ["text_encoder", "vae"]
+
+dataset:
+  folder: "data/sfw_0.1k/images"
+  num_repeats: 1
+  batch_size: 1
+
+  bucket_base_size: 1024
+  step: 128
+  min_size: 384
+  do_upscale: false
+
+  caption_processors:
+    - type: shuffle
+      split_separator: ","
+    - type: prefix
+      prefix: "You are an assistant designed to generate anime images based on danbooru tags. <Prompt Start>"
+
+optimizer:
+  name: "schedulefree.RAdamScheduleFree"
+  # name: "bitsandbytes.optim.AdamW8bit"
+  args:
+    lr: 0.001
+
+scheduler:
+  # name: "torch.optim.lr_scheduler.ConstantLR"
+  # args: {}
+
+tracker:
+  project_name: "lumina2-lora-1"
+  loggers:
+    - wandb
+
+saving:
+  strategy:
+    per_epochs: 1
+    per_steps: 1 # null to disable
+    save_last: true
+
+  callbacks:
+    - type: "safentensors" # or "hf_hub" to push to hub
+      name: "lumina2-lora"
+      save_dir: "./output/lumina2-lora"
+
+preview:
+  strategy:
+    per_epochs: 1
+    per_steps: 1 # null to disable
+
+  callbacks:
+    - type: "local"
+      save_dir: "./output/lumina2-lora/preview"
+
+  data:
+    path: "./configs/lumina2/text_to_image/preview.yml"
+
+seed: 42
+num_train_epochs: 10
+
+trainer:
+  debug_mode: "1step"
+
+  gradient_checkpointing: true
+
+  torch_compile: false
+  torch_compile_args:
+    mode: max-autotune
+    fullgraph: true
+  fp32_matmul_precision: "high"

@@ -852,11 +852,20 @@ class NextDiT(nn.Module):
 
         # refine features
         for layer in self.context_refiner:
-            caption_features = layer(
-                caption_features,
-                freqs_cis=freqs_cis,
-                mask=mask,
-            )
+            if self.training and self.gradient_checkpointing:
+                caption_features: torch.Tensor = checkpoint(  # type: ignore
+                    layer,
+                    caption_features,
+                    freqs_cis,
+                    mask,
+                    use_reentrant=False,
+                )
+            else:
+                caption_features = layer(
+                    caption_features,
+                    freqs_cis=freqs_cis,
+                    mask=mask,
+                )
 
         return caption_features
 
@@ -871,12 +880,22 @@ class NextDiT(nn.Module):
 
         # refine images
         for layer in self.noise_refiner:
-            image_features = layer(
-                image_features,
-                freqs_cis=freqs_cis,
-                adaln_input=timestep,
-                mask=mask,
-            )
+            if self.training and self.gradient_checkpointing:
+                image_features: torch.Tensor = checkpoint(  # type: ignore
+                    layer,
+                    image_features,
+                    freqs_cis,
+                    timestep,
+                    mask,
+                    use_reentrant=False,
+                )
+            else:
+                image_features = layer(
+                    image_features,
+                    freqs_cis=freqs_cis,
+                    adaln_input=timestep,
+                    mask=mask,
+                )
 
         return image_features
 
@@ -1029,9 +1048,10 @@ class NextDiT(nn.Module):
                 context = checkpoint(  # type: ignore
                     layer,
                     context,
-                    freqs_cis=freqs_cis,
-                    adaln_input=timestep,
-                    mask=overall_mask,
+                    freqs_cis,
+                    timestep,
+                    overall_mask,
+                    use_reentrant=False,
                 )
             else:
                 context = layer(
@@ -1078,3 +1098,9 @@ class Denoiser(NextDiT):
         )
 
         self.config = config
+
+    def set_gradient_checkpointing(self, value: bool):
+        """
+        Enable or disable gradient checkpointing.
+        """
+        self.gradient_checkpointing = value

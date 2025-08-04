@@ -157,3 +157,12 @@ def convert_to_original_key(key: str) -> str:
         key = vae_convert_to_original_key(key)
 
     return key
+
+
+def convert_to_comfy_key(key: str) -> str:
+    key = convert_to_original_key(key)
+
+    # model.diffusion_model. ->  diffusion_model.
+    key = key.replace("model.diffusion_model.", "diffusion_model.", 1)
+
+    return key

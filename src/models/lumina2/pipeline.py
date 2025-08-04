@@ -448,3 +448,6 @@ class Lumina2(nn.Module):
             torch.cuda.empty_cache()
 
         return images
+
+    def forward(self, *args, **kwargs):
+        return self.denoiser(*args, **kwargs)
