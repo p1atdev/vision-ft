@@ -990,7 +990,6 @@ class NextDiT(nn.Module):
                 [freqs_cis[i, : caption_lens[i]] for i in range(len(caption_lens))],
                 freqs_cis.device,
             )
-            # print("caption_freqs_cis", caption_freqs_cis)
             caption_features = self.refine_text_features(
                 features=caption_features,
                 freqs_cis=caption_freqs_cis,
@@ -1006,8 +1005,7 @@ class NextDiT(nn.Module):
             [freqs_cis[i, mask] for i, mask in enumerate(image_position_mask)],
             freqs_cis.device,
         )
-        # print("image_masks", image_masks)
-        # print("image_freqs_cis", image_freqs_cis)
+
         patches = self.refine_image_features(
             images=image_patches,
             freqs_cis=image_freqs_cis,
