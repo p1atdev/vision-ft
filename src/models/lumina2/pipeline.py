@@ -248,14 +248,21 @@ class Lumina2(nn.Module):
         # width
         if isinstance(width, int):
             width = [width]
-        if len(width) == 1:
-            width = width * len(prompts)
 
         # height
         if isinstance(height, int):
             height = [height]
-        if len(height) == 1:
-            height = height * len(prompts)
+
+        if not (len(prompts) == len(width) == len(height)):
+            max_length = max(len(prompts), len(width), len(height))
+            if len(prompts) == 1:
+                prompts = prompts * max_length
+            if negative_prompts is not None and len(negative_prompts) == 1:
+                negative_prompts = negative_prompts * max_length
+            if len(width) == 1:
+                width = width * max_length
+            if len(height) == 1:
+                height = height * max_length
 
         assert len(prompts) == len(width) == len(height), (
             "The length of prompts, width, and height must be the same. But got "
@@ -308,7 +315,7 @@ class Lumina2(nn.Module):
         num_inference_steps: int = 25,
         cfg_scale: float = 5.0,
         renorm_cfg_scale: float = 0.0,
-        cfg_truncation_ratio: float = 1.0,
+        cfg_truncation_ratio: float = 0.0,
         max_token_length: int = 256,
         seed: int | None = None,
         execution_dtype: torch.dtype = torch.bfloat16,
@@ -356,21 +363,23 @@ class Lumina2(nn.Module):
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # current_timestep is 0.0 -> 1.0
             for i, current_timestep in enumerate(timesteps):
+                # 0.0 -> 1.0
+                timestep_input = current_timestep.repeat(batch_size).to(
+                    execution_device
+                )
+
                 # should do cfg?
                 current_step_ratio = (i + 1) / num_inference_steps
                 do_cfg_on_this_step = (
                     do_cfg and current_step_ratio > cfg_truncation_ratio
                 )
 
-                # expand the latents if we are doing classifier free guidance
-                latents_input = (
-                    torch.cat([latents] * 2) if do_cfg_on_this_step else latents
-                )
-
-                # 0.0 -> 1.0
-                timestep_input = current_timestep.repeat(batch_size).to(
-                    execution_device
-                )
+                if do_cfg_on_this_step:
+                    # expand the latents if we are doing classifier free guidance
+                    latents_input = torch.cat([latents] * 2)
+                    timestep_input = torch.cat([timestep_input] * 2)
+                else:
+                    latents_input = latents
 
                 # prepare the prompt features
                 prompt_embeddings, prompt_mask = self.prepare_encoder_hidden_states(
@@ -386,9 +395,6 @@ class Lumina2(nn.Module):
                 ) != prompt_feature_cache.size(0):
                     prompt_feature_cache = None
                     prompt_mask_cache = prompt_mask
-
-                # print("prompt_feature_cache", prompt_feature_cache)
-                # print("prompt_mask", prompt_mask_cache)
 
                 # predict velocity and cache prompt features
                 velocity_pred, prompt_mask_cache, prompt_feature_cache = self.denoiser(

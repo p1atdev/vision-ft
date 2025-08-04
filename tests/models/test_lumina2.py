@@ -167,6 +167,44 @@ def test_generate_neta_lumina():
         print(f"Image saved to {temp_file}")
 
 
+def test_generate_neta_lumina_multiple_resolutions():
+    repo_name = "neta-art/Neta-Lumina"
+    path = hf_hub_download(
+        repo_name,
+        filename="neta-lumina-v1.0-all-in-one.safetensors",
+    )
+    assert os.path.exists(path), f"File {path} does not exist"
+
+    config = Lumina2Config(
+        checkpoint_path=path,
+        denoiser=DenoiserConfig(),
+    )
+
+    model = Lumina2.from_checkpoint(config)
+    model.to(device="cuda")
+
+    with torch.inference_mode():
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            images = model.generate(
+                prompt="1girl, solo, upper body, masterpiece, best quality",
+                negative_prompt="worst quality, low quality",
+                height=[512, 640],
+                width=[512, 320],
+                cfg_scale=5.0,
+                renorm_cfg_scale=1.0,
+                cfg_truncation_ratio=0.0,
+                execution_dtype=torch.bfloat16,
+                device="cuda:0",
+                num_inference_steps=25,
+                seed=0,
+            )
+
+    with tempfile.TemporaryDirectory(delete=False) as temp_file:
+        temp_file = os.path.join(temp_file, "lumina2.webp")
+        images[0].save(temp_file)
+        print(f"Image saved to {temp_file}")
+
+
 def test_position_ids():
     device = torch.device("cpu")
     caption_length = 64
