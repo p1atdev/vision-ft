@@ -3,6 +3,7 @@ import click
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nested import to_padded_tensor
 
 from accelerate import init_empty_weights
@@ -83,6 +84,46 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
                 caption_mask=caption_mask,
             )
 
+    # for auxiliary loss
+    def downsample_4x(self, latents: torch.Tensor) -> torch.Tensor:
+        return F.avg_pool2d(
+            latents,
+            kernel_size=4,
+            stride=4,
+            padding=0,
+            count_include_pad=False,
+        )
+
+    def forward_and_loss(
+        self,
+        model: nn.Module,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        caption_features: torch.Tensor,
+        caption_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        # 2. Prepare the noised latents
+        noisy_latents, random_noise = prepare_noised_latents(
+            latents=latents,
+            timestep=timestep,
+        )
+
+        # 3. Predict the noise
+        velocity_pred, _, _ = model(
+            latents=noisy_latents,
+            timestep=timestep,
+            caption_features=caption_features,
+            caption_mask=caption_mask,
+        )
+        # actually no padding, just convert to normal tensor
+        velocity_pred = -to_padded_tensor(velocity_pred, padding=0.0)
+
+        return loss_with_predicted_velocity(
+            latents=latents,
+            random_noise=random_noise,
+            predicted_velocity=velocity_pred,
+        )
+
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
         caption = batch["caption"]
@@ -102,37 +143,31 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
 
             latents = self.model.encode_image(pixel_values)
             # 0.0 ~ 1.0
-            timesteps = shift_uniform_rand(  # shifted timesteps?
+            timesteps = 1 - shift_uniform_rand(
                 latents_shape=latents.shape,
                 device=self.accelerator.device,
                 shift=self.model_config.timestep_shift,
             )
 
-        # 2. Prepare the noised latents
-        noisy_latents, random_noise = prepare_noised_latents(
+        # 2~4. Predict and calculate the loss
+        l2_highres_loss = self.forward_and_loss(
+            model=self.model,
             latents=latents,
-            timestep=timesteps,
-        )
-
-        # 3. Predict the noise
-        velocity_pred, _, _ = self.model(
-            latents=noisy_latents,
             timestep=timesteps,
             caption_features=encoder_hidden_states,
             caption_mask=caption_mask,
         )
-
-        # 4. Calculate the loss
-        l2_loss = loss_with_predicted_velocity(
-            latents=latents,
-            random_noise=random_noise,
-            # actually no padding, just convert to normal tensor
-            predicted_velocity=-to_padded_tensor(
-                velocity_pred, padding=0.0
-            ),  # inverted
+        l2_lowres_loss = self.forward_and_loss(
+            model=self.model,
+            latents=self.downsample_4x(latents),
+            timestep=timesteps,
+            caption_features=encoder_hidden_states,
+            caption_mask=caption_mask,
         )
-        total_loss = l2_loss
+        total_loss = l2_highres_loss + l2_lowres_loss
 
+        self.log("train/highres_loss", l2_highres_loss, on_step=True, on_epoch=True)
+        self.log("train/lowres_loss", l2_lowres_loss, on_step=True, on_epoch=True)
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
         return total_loss
