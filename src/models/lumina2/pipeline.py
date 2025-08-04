@@ -314,7 +314,7 @@ class Lumina2(nn.Module):
         height: int | list[int] = 768,
         num_inference_steps: int = 25,
         cfg_scale: float = 5.0,
-        renorm_cfg_scale: float = 0.0,
+        renorm_cfg_scale: float = 1.0,  # 0.0 to disable
         cfg_truncation_ratio: float = 0.0,
         max_token_length: int = 256,
         seed: int | None = None,
@@ -340,12 +340,17 @@ class Lumina2(nn.Module):
         batch_size = len(prompts)
 
         # 2. Encode text
+        if do_offloading:
+            self.text_encoder.to(execution_device)
         encoder_output = self.text_encoder.encode_prompts(
             prompts=prompts,
             negative_prompts=negative_prompts,
             use_negative_prompts=do_cfg,
             max_token_length=max_token_length,
         )
+        if do_offloading:
+            self.text_encoder.to("cpu")
+            torch.cuda.empty_cache()
 
         # 3. Prepare latents
         latents = self.prepare_nested_latents(
@@ -357,6 +362,8 @@ class Lumina2(nn.Module):
         )
 
         # 4. Denoise
+        if do_offloading:
+            self.denoiser.to(execution_device)
         # prepare refined prompt feature cache
         prompt_feature_cache: torch.Tensor | None = None
         prompt_mask_cache: torch.Tensor | None = None
@@ -428,7 +435,16 @@ class Lumina2(nn.Module):
 
                 progress_bar.update(1)
 
+        if do_offloading:
+            self.denoiser.to("cpu")
+            torch.cuda.empty_cache()
+
+            self.vae.to(execution_device)  # type: ignore
+
         # 5. Decode latents
         images = self.decode_nested_image(latents)
+        if do_offloading:
+            self.vae.to("cpu")  # type: ignore
+            torch.cuda.empty_cache()
 
         return images
