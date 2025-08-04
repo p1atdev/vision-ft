@@ -93,9 +93,6 @@ def shift_uniform_rand(
     device: torch.device,
     shift: float = 6.0,
 ):
-    """
-    Shift the uniform random values to the range [0, shift].
-    """
     batch_size, _channels, _height, _width = latents_shape
 
     timesteps = torch.rand(batch_size, device=device)
