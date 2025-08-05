@@ -7,7 +7,10 @@ import torch
 
 
 def get_lin_function(
-    x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
+    x1: float = 256,
+    y1: float = 0.5,
+    x2: float = 4096,
+    y2: float = 1.15,
 ) -> Callable[[float], float]:
     m = (y2 - y1) / (x2 - x1)
     b = y1 - m * x1

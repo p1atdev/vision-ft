@@ -1,4 +1,5 @@
 from PIL.Image import Image
+from typing import Literal
 import click
 
 import torch
@@ -18,11 +19,7 @@ from src.modules.loss.flow_match import (
     prepare_noised_latents,
     loss_with_predicted_velocity,
 )
-from src.modules.timestep.sampling import (
-    uniform_rand,
-    shift_sigmoid_randn,
-    shift_uniform_rand,
-)
+from src.modules.timestep.sampling import uniform_rand
 from src.modules.peft import get_adapter_parameters
 from src.utils.logging import wandb_image
 
@@ -32,7 +29,8 @@ torch._dynamo.config.capture_scalar_outputs = True  # type: ignore
 class Lumina2ForTextToImageTrainingConfig(Lumina2Config):
     max_token_length: int = 256
 
-    timestep_shift: float = 6.0
+    timestep_sampling: Literal["uniform", "lognorm"] = "uniform"
+    use_lowres_loss: bool = True
 
 
 class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
@@ -90,8 +88,6 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             latents,
             kernel_size=4,
             stride=4,
-            padding=0,
-            count_include_pad=False,
         )
 
     def forward_and_loss(
@@ -124,6 +120,28 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             predicted_velocity=velocity_pred,
         )
 
+    def sample_timesteps(
+        self,
+        latents_shape: torch.Size,
+    ) -> torch.Tensor:
+        if self.model_config.timestep_sampling == "uniform":
+            return uniform_rand(
+                latents_shape=latents_shape,
+                device=self.accelerator.device,
+            )
+        elif self.model_config.timestep_sampling == "lognorm":
+            return self.model.scheduler.sample_sigmoid_randn(
+                latents_shape=latents_shape,
+                device=self.accelerator.device,
+                patch_size=self.model.denoiser.patch_size,
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown timestep sampling method: {self.model_config.timestep_sampling}. "
+                "Please use 'uniform' or 'lognorm'."
+            )
+
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
         caption = batch["caption"]
@@ -143,10 +161,8 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
 
             latents = self.model.encode_image(pixel_values)
             # 0.0 ~ 1.0
-            timesteps = 1 - shift_uniform_rand(
+            timesteps = self.sample_timesteps(
                 latents_shape=latents.shape,
-                device=self.accelerator.device,
-                shift=self.model_config.timestep_shift,
             )
 
         # 2~4. Predict and calculate the loss
@@ -157,17 +173,20 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             caption_features=encoder_hidden_states,
             caption_mask=caption_mask,
         )
-        l2_lowres_loss = self.forward_and_loss(
-            model=self.model,
-            latents=self.downsample_4x(latents),
-            timestep=timesteps,
-            caption_features=encoder_hidden_states,
-            caption_mask=caption_mask,
-        )
-        total_loss = l2_highres_loss + l2_lowres_loss
-
+        total_loss = l2_highres_loss
         self.log("train/highres_loss", l2_highres_loss, on_step=True, on_epoch=True)
-        self.log("train/lowres_loss", l2_lowres_loss, on_step=True, on_epoch=True)
+
+        if self.model_config.use_lowres_loss:
+            l2_lowres_loss = self.forward_and_loss(
+                model=self.model,
+                latents=self.downsample_4x(latents),
+                timestep=timesteps,
+                caption_features=encoder_hidden_states,
+                caption_mask=caption_mask,
+            )
+            total_loss += l2_lowres_loss
+            self.log("train/lowres_loss", l2_lowres_loss, on_step=True, on_epoch=True)
+
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
         return total_loss

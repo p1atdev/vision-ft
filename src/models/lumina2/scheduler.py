@@ -1,6 +1,9 @@
 import numpy as np
+import math
 
 import torch
+
+from src.modules.timestep.sampling import sigmoid_randn, get_lin_function
 
 
 # https://github.com/huggingface/diffusers/blob/v0.34.0/src/diffusers/schedulers/scheduling_flow_match_euler_discrete.py
@@ -41,6 +44,32 @@ class Scheduler:
         sigmas = np.concat([sigmas, [0]]).astype(np.float32)
 
         return sigmas
+
+    def sample_sigmoid_randn(
+        self,
+        latents_shape: torch.Size,
+        device: torch.device,
+        patch_size: int = 2,
+        sigma: float = 1.0,
+    ) -> torch.Tensor:
+        _batch_size, _channels, height, width = latents_shape
+
+        timesteps = sigmoid_randn(latents_shape, device)
+        seq_len = (height // patch_size) * (width // patch_size)
+
+        mu = get_lin_function(
+            x1=self.base_image_seq_len,
+            y1=self.base_shift,
+            x2=self.max_image_seq_len,
+            y2=self.max_shift,
+        )(seq_len)
+
+        # Lumina2 uses 0.0 -> 1.0 timesteps, so we need to reverse
+        timesteps = 1 - timesteps
+        timesteps = math.exp(mu) / (math.exp(mu) + (1 / timesteps - 1) ** sigma)
+        timesteps = 1 - timesteps
+
+        return timesteps
 
     def step(
         self,

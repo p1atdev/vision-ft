@@ -339,3 +339,12 @@ def test_patchify_unpachify():
         unpatchified[2],
         atol=1e-6,
     )
+
+
+def test_lognorm_timestep_sampling():
+    batch_size = 8
+
+    u = torch.normal(mean=0.0, std=1.0, size=(batch_size,))
+    t = 1 / (1 + torch.exp(-u))
+
+    assert torch.allclose(t, u.sigmoid())
