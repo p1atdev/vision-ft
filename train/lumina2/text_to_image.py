@@ -114,6 +114,9 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
         # actually no padding, just convert to normal tensor
         velocity_pred = -to_padded_tensor(velocity_pred, padding=0.0)
 
+        # Lumina2's training target:
+        # loss := rmse(prediction, clean_latents - random_noise)
+        #       = rmse(-prediction, random_noise - clean_latents)
         return loss_with_predicted_velocity(
             latents=latents,
             random_noise=random_noise,
