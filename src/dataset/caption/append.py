@@ -20,7 +20,7 @@ class CaptionSuffix(CaptionProcessorMixin):
     suffix: str
 
     def process(self, caption: str) -> str:
-        return self.suffix + caption
+        return caption + self.suffix
 
 
 class CaptionRandomPrefix(CaptionProcessorMixin):
