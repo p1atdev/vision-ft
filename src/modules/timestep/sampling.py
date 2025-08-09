@@ -2,6 +2,7 @@ from typing import Callable, Literal
 import math
 
 import torch
+import numpy as np
 
 # MARK: flow-match
 
@@ -99,6 +100,63 @@ def shift_uniform_rand(
     batch_size, _channels, _height, _width = latents_shape
 
     timesteps = torch.rand(batch_size, device=device)
+    timesteps = (timesteps * shift) / (1 + (shift - 1) * timesteps)
+
+    return timesteps
+
+
+# 20, 25, 32 -> set(0/20, 1/20, 2/20, ..., 1/25, 2/25, ..., 1/32, 2/32, ..., 32/32)
+def _create_fraction(denominators: list[int]) -> np.ndarray:
+    unique_fractions = set()
+
+    for d in denominators:
+        # 分子が 0 から d までの分数を生成し、setに追加する
+        # 例: d=20 の場合、0/20, 1/20, 2/20, ..., 20/20 を追加
+        for i in range(0, d + 1):
+            unique_fractions.add(i / d)
+
+    fraction_list = list(unique_fractions)
+
+    numpy_array = np.array(fraction_list, dtype=np.float32)
+
+    return numpy_array
+
+
+# only divisible steps
+def fraction_uniform_rand(
+    latents_shape: torch.Size,
+    device: torch.device,
+    divisible: list[int] = list(range(20, 30)),
+) -> torch.Tensor:
+    assert len(divisible) > 0, "divisible must not be empty"
+
+    batch_size = latents_shape[0]
+
+    fractions = _create_fraction(divisible)
+    # choose random fractions
+    random_fractions = np.random.choice(fractions, size=batch_size, replace=True)
+
+    # convert to tensor
+    timesteps = torch.from_numpy(random_fractions).to(
+        device=device,
+        dtype=torch.float32,
+    )
+
+    return timesteps
+
+
+def shift_fraction_uniform_rand(
+    latents_shape: torch.Size,
+    device: torch.device,
+    shift: float = 6.0,
+    divisible: list[int] = list(range(20, 30)),
+) -> torch.Tensor:
+    timesteps = fraction_uniform_rand(
+        latents_shape=latents_shape,
+        device=device,
+        divisible=divisible,
+    )
+
     timesteps = (timesteps * shift) / (1 + (shift - 1) * timesteps)
 
     return timesteps

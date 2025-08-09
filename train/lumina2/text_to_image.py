@@ -19,7 +19,7 @@ from src.modules.loss.flow_match import (
     prepare_noised_latents,
     loss_with_predicted_velocity,
 )
-from src.modules.timestep.sampling import uniform_rand
+from src.modules.timestep.sampling import uniform_rand, shift_fraction_uniform_rand
 from src.modules.peft import get_adapter_parameters
 from src.utils.logging import wandb_image
 
@@ -29,8 +29,15 @@ torch._dynamo.config.capture_scalar_outputs = True  # type: ignore
 class Lumina2ForTextToImageTrainingConfig(Lumina2Config):
     max_token_length: int = 256
 
-    timestep_sampling: Literal["uniform", "lognorm"] = "uniform"
+    timestep_sampling: Literal[
+        "uniform",
+        "lognorm",
+        "shift_fraction_uniform",
+    ] = "uniform"
+    timestep_fraction_divisible: list[int] = [20, 25, 30, 32]
+
     use_lowres_loss: bool = True
+    use_downsampled_velocity_loss: bool = False
 
 
 class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
@@ -97,7 +104,7 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
         timestep: torch.Tensor,
         caption_features: torch.Tensor,
         caption_mask: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(
             latents=latents,
@@ -117,11 +124,13 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
         # Lumina2's training target:
         # loss := rmse(prediction, clean_latents - random_noise)
         #       = rmse(-prediction, random_noise - clean_latents)
-        return loss_with_predicted_velocity(
+        loss = loss_with_predicted_velocity(
             latents=latents,
             random_noise=random_noise,
             predicted_velocity=velocity_pred,
         )
+
+        return loss, velocity_pred, (random_noise - latents)
 
     def sample_timesteps(
         self,
@@ -138,11 +147,18 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
                 device=self.accelerator.device,
                 patch_size=self.model.denoiser.patch_size,
             )
+        elif self.model_config.timestep_sampling == "shift_fraction_uniform":
+            # Lumina2 uses 0.0 -> 1.0 timesteps, so subtract from 1.0
+            return 1 - shift_fraction_uniform_rand(
+                latents_shape=latents_shape,
+                device=self.accelerator.device,
+                shift=self.model.scheduler.shift,
+                divisible=self.model_config.timestep_fraction_divisible,
+            )
 
         else:
             raise ValueError(
                 f"Unknown timestep sampling method: {self.model_config.timestep_sampling}. "
-                "Please use 'uniform' or 'lognorm'."
             )
 
     def train_step(self, batch: dict) -> torch.Tensor:
@@ -169,7 +185,7 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             )
 
         # 2~4. Predict and calculate the loss
-        l2_highres_loss = self.forward_and_loss(
+        l2_highres_loss, highres_velocity, highres_target = self.forward_and_loss(
             model=self.model,
             latents=latents,
             timestep=timesteps,
@@ -189,6 +205,22 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
             )
             total_loss += l2_lowres_loss
             self.log("train/lowres_loss", l2_lowres_loss, on_step=True, on_epoch=True)
+
+        if self.model_config.use_downsampled_velocity_loss:
+            small_velocity = self.downsample_4x(highres_velocity)
+            small_target = self.downsample_4x(highres_target)
+            l2_velocity_loss = F.mse_loss(
+                small_velocity,
+                small_target,
+                reduction="mean",
+            )
+            total_loss += l2_velocity_loss
+            self.log(
+                "train/downsampled_velocity_loss",
+                l2_velocity_loss,
+                on_step=True,
+                on_epoch=True,
+            )
 
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
