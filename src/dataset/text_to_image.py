@@ -1,5 +1,6 @@
 import os
 import imagesize
+import random
 from pathlib import Path
 from PIL import Image
 from pydantic import BaseModel
@@ -14,14 +15,12 @@ import torch
 import torch.utils.data as data
 import torchvision.transforms.v2 as v2
 import torchvision.transforms.v2.functional as TF
-import torchvision.io as io
 
 from datasets import Dataset
 
 
 from .transform import ObjectCoverResize
 from .bucket import (
-    Bucket,
     BucketDataset,
 )
 from .aspect_ratio_bucket import (
@@ -31,6 +30,7 @@ from .aspect_ratio_bucket import (
     print_arb_info,
 )
 from .caption import CaptionProcessorList
+from .tags import format_general_character_tags
 
 
 class ImageCaptionPair(BaseModel):
@@ -41,14 +41,50 @@ class ImageCaptionPair(BaseModel):
     metadata: Path | None = None
 
     def read_caption(self) -> str:
-        if self.caption is not None:
-            return self.caption.read_text()
-        assert self.metadata is not None
+        if self.metadata is not None:
+            with open(self.metadata, "r") as f:
+                metadata = json.load(f)
 
+            if "tag_string" in metadata:
+                return metadata["tag_string"].replace(" ", ", ").replace("_", " ")
+
+            # wd-tagger-rs format
+            if "tagger" in metadata:
+                return format_general_character_tags(
+                    general=metadata["tagger"].get("general", []),
+                    character=metadata["tagger"].get("character", []),
+                    separator=", ",
+                    group_separator="|||",
+                )
+
+            if "tags" in metadata:
+                return metadata["tags"]
+
+            if "caption" in metadata:
+                return metadata["caption"]
+
+            if "captions" in metadata:
+                return random.choice(metadata["captions"])
+
+            raise ValueError(
+                f"Caption not found in metadata {self.metadata}. Available keys: {', '.join(metadata.keys())}"
+            )
+
+        assert self.caption is not None
+        return self.caption.read_text()
+
+    @property
+    def should_skip(self) -> bool:
+        if self.metadata is None:
+            return False
+
+        # if skip parameter is set and it is true, skip this image
         with open(self.metadata, "r") as f:
             metadata = json.load(f)
+        if "skip" in metadata and metadata["skip"]:
+            return True
 
-        return metadata["tag_string"].replace(" ", ", ").replace("_", " ")
+        return False
 
 
 class RandomCropOutput(NamedTuple):
@@ -230,15 +266,16 @@ class TextToImageDatasetConfig(AspectRatioBucketConfig):
                     assert isinstance(height, int)
 
                     if caption_path is not None or metadata_path is not None:
-                        pairs.append(
-                            ImageCaptionPair(
-                                image=image_path,
-                                width=width,
-                                height=height,
-                                caption=caption_path,
-                                metadata=metadata_path,
-                            )
+                        pair = ImageCaptionPair(
+                            image=image_path,
+                            width=width,
+                            height=height,
+                            caption=caption_path,
+                            metadata=metadata_path,
                         )
+                        if pair.should_skip:
+                            continue
+                        pairs.append(pair)
                     else:
                         raise FileNotFoundError(
                             f"Caption file {caption_path} or metadata file {metadata_path} \
