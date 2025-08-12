@@ -197,7 +197,14 @@ def _load_peft_weight(
                 param_name: state_dict.get(f"{full_name}.{param_name}")
                 for param_name in peft_class.adapter_weight_names
             }
-            if all([value is not None for value in adapter_state_dict.values()]):
+            # check if all adapter weights except bias are present
+            if all(
+                [
+                    value is not None
+                    for key, value in adapter_state_dict.items()
+                    if "bias" not in key
+                ]
+            ):
                 lora_layer = peft_class.from_weights(
                     adapter_state_dict,  # type: ignore
                     layer,
