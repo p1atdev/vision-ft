@@ -1,8 +1,7 @@
-from typing import Any, Mapping
+from typing import Any
 import re
 
 import torch
-import torch.nn as nn
 
 
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
@@ -34,15 +33,15 @@ DEFAULT_VAE_CONFIG = {
 VAE_TENSOR_PREFIX = "vae."
 DEFAULT_VAE_FOLDER = "vae"
 
-FLUX_VAE_COMPRESSION_RATIO = 8
-FLUX_VAE_SCALING_FACTOR = 0.13025
-FLUX_VAE_SHIFT_FACTOR = 0.0
+VAE_COMPRESSION_RATIO = 8
+VAE_SCALING_FACTOR = 0.13025
+VAE_SHIFT_FACTOR = 0.0
 
 
 class VAE(AutoencoderKL):
-    compression_ratio = FLUX_VAE_COMPRESSION_RATIO
-    scaling_factor = FLUX_VAE_SCALING_FACTOR
-    shift_factor = FLUX_VAE_SHIFT_FACTOR
+    compression_ratio = VAE_COMPRESSION_RATIO
+    scaling_factor = VAE_SCALING_FACTOR
+    shift_factor = VAE_SHIFT_FACTOR
 
     keep_diffusers_format: bool = False
 
