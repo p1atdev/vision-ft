@@ -24,13 +24,14 @@ except ModuleNotFoundError:
     FLASH_ATTN_2_AVAILABLE = False
 
 
-from ...modules.attention import scaled_dot_product_attention
 from ...modules.norm import FP32LayerNorm, FP32RMSNorm
+from .config import DenoiserConfig
+
 
 # ref: https://github.com/Wan-Video/Wan2.2/blob/main/wan/modules/model.py
 
 
-def sinusoidal_embedding_1d(dim, position):
+def sinusoidal_embedding_1d(dim: int, position: torch.Tensor):
     # preprocess
     assert dim % 2 == 0
     half = dim // 2
@@ -38,7 +39,8 @@ def sinusoidal_embedding_1d(dim, position):
 
     # calculation
     sinusoid = torch.outer(
-        position, torch.pow(10000, -torch.arange(half).to(position).div(half))
+        position,
+        torch.pow(10000, -torch.arange(half).to(position).div(half)),
     )
     x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
     return x
@@ -62,14 +64,18 @@ def rope_params(
 
 @torch.autocast(device_type="cuda", enabled=False)
 def rope_apply(
-    x: torch.Tensor,
-    grid_sizes: torch.Tensor,  # [16, 56, 56]
+    hidden_states: torch.Tensor,  # [batch_size, seq_len, num_heads=24, hidden_dim=128]
+    grid_sizes: torch.Tensor,  # [batch_size, (H, W)]
     freqs: torch.Tensor,
 ) -> torch.Tensor:
-    n, c = x.size(2), x.size(3) // 2
+    n, c = hidden_states.size(2), hidden_states.size(3) // 2
 
     # split freqs
-    freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
+    freqs = freqs.split(
+        # 44, 42, 42
+        [c - 2 * (c // 3), c // 3, c // 3],
+        dim=1,
+    )
 
     # loop over samples
     output = []
@@ -78,7 +84,7 @@ def rope_apply(
 
         # precompute multipliers
         x_i = torch.view_as_complex(
-            x[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2)
+            hidden_states[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2)
         )
         freqs_i = torch.cat(
             [
@@ -91,7 +97,7 @@ def rope_apply(
 
         # apply rotary embedding
         x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
-        x_i = torch.cat([x_i, x[i, seq_len:]])
+        x_i = torch.cat([x_i, hidden_states[i, seq_len:]])
 
         # append to collection
         output.append(x_i)
@@ -806,3 +812,35 @@ class DiT(nn.Module):
 
         # init output layer
         nn.init.zeros_(self.head.head.weight)
+
+
+class Denoiser(nn.Module):
+    def __init__(self, config: DenoiserConfig):
+        super().__init__()
+
+        self.config = config
+
+        # model
+        self.model = DiT(
+            model_type=config.type,
+            patch_size=config.patch_size,
+            text_len=config.text_length,
+            in_dim=config.in_channels,
+            dim=config.hidden_dim,
+            ffn_dim=config.ffn_dim,
+            freq_dim=config.freq_dim,
+            text_dim=config.text_dim,
+            out_dim=config.out_channels,
+            num_heads=config.num_heads,
+            num_layers=config.num_layers,
+            window_size=(-1, -1),
+            qk_norm=True,
+            cross_attn_norm=True,
+            eps=config.norm_eps,
+        )
+
+    def set_gradient_checkpointing(self, value: bool):
+        """
+        Enable or disable gradient checkpointing.
+        """
+        self.model.gradient_checkpointing = value

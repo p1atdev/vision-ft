@@ -15,6 +15,7 @@ class DenoiserConfig(BaseModel):
     hidden_dim: int = 3072
     ffn_dim: int = 14336
     freq_dim: int = 256
+    text_dim: int = 512
 
     num_heads: int = 24
     num_layers: int = 30
