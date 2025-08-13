@@ -5,6 +5,12 @@ model:
 
   # denoiser:
 
+  timestep_sampling: lognorm # uniform, lognorm, shift_fraction_uniform
+  # timestep_fraction_divisible: [20, 25, 30, 32]
+
+  use_lowres_loss: false
+  use_downsampled_velocity_loss: false
+
 peft:
   config:
     type: lora
@@ -18,7 +24,7 @@ peft:
     - "attention"
     - "feed_forward"
     # - "adaLN_modulation"
-  exclude_keys: ["text_encoder", "vae"]
+  exclude_keys: ["text_encoder", "vae", "noise_refiner"]
 
 dataset:
   folder: "data/sfw_0.1k/images"
@@ -81,6 +87,7 @@ trainer:
   debug_mode: "1step"
 
   gradient_checkpointing: true
+  gradient_accumulation_steps: 1
 
   torch_compile: false
   torch_compile_args:
