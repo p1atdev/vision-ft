@@ -45,6 +45,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         num_ip_tokens: int = 4,
         attn_implementation: AttentionImplementation = "eager",
         skip_zero_tokens: bool = False,  # skip ip calculation if ip tokens are all zeros
+        attn_renorm: bool = False,
         *args,
         **kwargs,
     ):
@@ -59,6 +60,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         self.num_ip_tokens = num_ip_tokens
         self.attn_implementation: AttentionImplementation = attn_implementation
         self.skip_zero_tokens = skip_zero_tokens
+        self.attn_renorm = attn_renorm
 
         # original modules
         self.to_q = to_q  # maybe nn.Linear, but perhaps BnbLinear4bit etc.
@@ -133,6 +135,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             num_ip_tokens=config.num_ip_tokens,
             attn_implementation=module.attn_implementation,
             skip_zero_tokens=config.skip_zero_tokens,
+            attn_renorm=config.attn_renorm,
         )
         new_module.freeze_original_modules()
 
@@ -183,6 +186,16 @@ class IPAdapterCrossAttentionSDXL(Adapter):
 
         return attn
 
+    def renorm_feature(
+        self, original_feature: torch.Tensor, new_feature: torch.Tensor
+    ) -> torch.Tensor:
+        original_norm = torch.norm(original_feature, dim=-1, keepdim=True)
+        new_norm = torch.norm(new_feature, dim=-1, keepdim=True)
+
+        renormed_feature = new_feature * (original_norm / new_norm)
+
+        return renormed_feature
+
     def forward(
         self,
         latents: torch.Tensor,
@@ -219,6 +232,13 @@ class IPAdapterCrossAttentionSDXL(Adapter):
                 mask=None,
             )
             hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+
+            if self.attn_renorm:
+                # renormalize the feature to match the original feature norm
+                hidden_states = self.renorm_feature(
+                    original_feature=latents,
+                    new_feature=hidden_states,
+                )
 
         hidden_states = self.to_out(hidden_states)
 

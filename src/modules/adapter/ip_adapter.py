@@ -310,7 +310,10 @@ class IPAdapterConfig(BaseModel):
 
     # peft type
     peft: PeftConfigUnion | None = None
+
+    # custom options
     skip_zero_tokens: bool = False
+    attn_renorm: bool = False  # whether to use attention renormalization
 
 
 # MARK: IPAdapterManager
