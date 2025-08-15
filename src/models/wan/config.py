@@ -47,7 +47,9 @@ class Wan22TI2V5BDenoiserConfig(DenoiserConfig):
 
 
 class WanConfig(BaseModel):
-    checkpoint_path: str
+    denoiser_path: str
+    text_encoder_path: str
+    vae_path: str
 
     dtype: str = "bfloat16"
 
