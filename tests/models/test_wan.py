@@ -8,6 +8,7 @@ from transformers import T5TokenizerFast, T5Tokenizer, AutoTokenizer
 from src.modules.norm import FP32LayerNorm, FP32RMSNorm
 from src.models.wan.text_encoder import TextEncoder
 from src.models.wan.denoiser import Denoiser
+from src.models.wan.vae import VAE
 from src.models.wan import Wan22TI2V5BDenoiserConfig
 from src.models.wan.util import convert_from_original_key, convert_to_original_key
 
@@ -137,3 +138,30 @@ def test_load_denoiser():
         outputs = denoiser(latents, timesteps, context, seq_len)
         # outputs is a nested tensor
         assert outputs[0].shape == (48, 16, 24, 32)
+
+
+def test_load_vae():
+    with init_empty_weights():
+        vae = VAE.from_default()
+
+    state_dict = load_file("models/wan2.2-vae.safetensors")
+
+    vae.load_state_dict(
+        {convert_from_original_key(k, "vae"): v for k, v in state_dict.items()},
+        strict=True,
+        assign=True,
+    )
+    vae.to("cuda:0")
+
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        video = torch.randn(
+            1,  # batch
+            3,  # channels
+            24,  # frames
+            720,  # height
+            1280,  # width
+        ).to("cuda:0")
+
+        # encode
+        latents = vae.encode(video, return_dict=True).latent_dist.sample()
+        assert latents.shape == (1, 48, 24 // 4, 720 // 16, 1280 // 16)
