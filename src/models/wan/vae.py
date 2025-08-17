@@ -1,3 +1,4 @@
+import torch
 from diffusers.models.autoencoders.autoencoder_kl_wan import AutoencoderKLWan
 
 # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/blob/main/vae/config.json
@@ -129,13 +130,18 @@ DEFAULT_VAE_FOLDER = "vae"
 
 TEMPORAL_COMPRESSION_RATIO = 4
 SPATIAL_COMPRESSION_RATIO = 16
+LATENT_DIM = 48
 
 
 class VAE(AutoencoderKLWan):
     temporal_compression_ratio = TEMPORAL_COMPRESSION_RATIO
     spatial_compression_ratio = SPATIAL_COMPRESSION_RATIO
-    shift_factor = LATENT_MEAN
-    scaling_factor = LATENT_STD
+    shift_factor = torch.tensor(LATENT_MEAN, requires_grad=False).view(
+        1, LATENT_DIM, 1, 1, 1
+    )
+    scaling_factor = torch.tensor(LATENT_STD, requires_grad=False).view(
+        1, LATENT_DIM, 1, 1, 1
+    )
 
     @classmethod
     def from_default(cls) -> "VAE":

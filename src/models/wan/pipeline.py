@@ -14,8 +14,7 @@ from .denoiser import (
 )
 from .text_encoder import TextEncoder, TextEncodingOutput
 from .vae import VAE
-
-# from .scheduler import Scheduler
+from .scheduler import Scheduler
 from .util import convert_from_original_key
 from ...utils import tensor as tensor_utils
 from ...modules.quant import replace_by_prequantized_weights
@@ -43,7 +42,7 @@ class Wan22(nn.Module):
         self.vae = VAE.from_default()
         self.text_encoder = TextEncoder.from_default()
 
-        # self.scheduler = Scheduler()  # euler
+        self.scheduler = Scheduler()  # euler
 
         self.progress_bar = tqdm
 
@@ -121,7 +120,7 @@ class Wan22(nn.Module):
         shape = (
             batch_size,
             latent_channels,
-            frames // self.vae.temporal_compression_ratio,
+            frames // self.vae.temporal_compression_ratio + 1,
             height // self.vae.spatial_compression_ratio,
             width // self.vae.spatial_compression_ratio,
         )
@@ -160,22 +159,33 @@ class Wan22(nn.Module):
             )
 
         encode_output = self.vae.encode(video_tensor.to(self.vae.dtype))  # type: ignore
+        sample = encode_output.latent_dist.sample()  # type: ignore
         latents = (
-            encode_output.latent_dist.sample() - self.vae.shift_factor  # type: ignore
-        ) * self.vae.scaling_factor
+            sample - self.vae.shift_factor.to(sample.device)
+        ) * self.vae.scaling_factor.to(sample.device)
 
         return latents
 
     @torch.inference_mode()
-    def decode_video(
+    def _decode_video(
+        self,
+        latents: torch.Tensor,
+    ) -> list[Image.Image]:
+        video_tensor = self.vae.decode(
+            latents / self.vae.scaling_factor.to(latents.device)
+            + self.vae.shift_factor.to(latents.device),
+            return_dict=False,
+        )[0]
+        video = tensor_utils.tensor_to_videos(video_tensor)[0]
+
+        return video
+
+    @torch.inference_mode()
+    def decode_videos(
         self,
         latents: torch.Tensor,
     ) -> list[list[Image.Image]]:
-        video_tensor = self.vae.decode(
-            latents / self.vae.scaling_factor + self.vae.shift_factor,  # type: ignore
-            return_dict=False,
-        )[0]
-        videos = tensor_utils.tensor_to_videos(video_tensor)
+        videos = [self._decode_video(latent.unsqueeze(0)) for latent in latents]
 
         return videos
 
@@ -184,15 +194,19 @@ class Wan22(nn.Module):
         num_inference_steps: int,
         device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        raise NotImplementedError(
-            "Wan22 does not support prepare_timesteps, use Scheduler instead."
-        )
+        timesteps = self.scheduler.get_timesteps(num_inference_steps)
+        sigmas = self.scheduler.get_sigmas(num_inference_steps)
+
+        timesteps = torch.from_numpy(timesteps).to(device)
+        sigmas = torch.from_numpy(sigmas).to(device)
+
+        return timesteps, sigmas
 
     def prepare_encoder_hidden_states(
         self,
         encoder_output: TextEncodingOutput,
         do_cfg: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:  # NestedTensor
         if do_cfg:
             prompt_embeddings = torch.cat(
                 [
@@ -212,7 +226,34 @@ class Wan22(nn.Module):
             prompt_embeddings = encoder_output.positive_embeddings
             mask = encoder_output.positive_attention_mask
 
-        return prompt_embeddings, mask
+        prompt_embeddings = torch.nested.as_nested_tensor(
+            [
+                prompt[_mask]
+                for (prompt, _mask) in zip(prompt_embeddings, mask.bool(), strict=True)
+            ]
+        )
+
+        return prompt_embeddings
+
+    def calculate_max_seq_len(
+        self,
+        latents: torch.Tensor,  # [B, C, F, H, W]
+        context: torch.Tensor,  # NestedTensor [b, C, D]
+    ) -> int:
+        frame_patch_size, height_patch_size, width_patch_size = (
+            self.config.denoiser.patch_size
+        )
+        _, _, frames, height, width = latents.shape
+        patches_len = (
+            (frames // frame_patch_size)
+            * (height // height_patch_size)
+            * (width // width_patch_size)
+        )
+        max_context_len = max(_context.size(1) for _context in context.unbind(dim=0))
+
+        max_seq_len = patches_len + max_context_len
+
+        return max_seq_len
 
     def _validate_batch_inputs(
         self,
@@ -299,13 +340,26 @@ class Wan22(nn.Module):
             seed=seed,
         )
 
+        # prepare the prompt features
+        prompt_embeddings = self.prepare_encoder_hidden_states(
+            encoder_output=encoder_output,
+            do_cfg=do_cfg,
+        )
+        seq_len = self.calculate_max_seq_len(
+            latents=latents,
+            context=prompt_embeddings,
+        )
+
+        # treat as nested
+        latents = torch.nested.as_nested_tensor(latents)
+
         # 4. Denoise
         if do_offloading:
             self.denoiser.to(execution_device)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
-            # current_timestep is 1.0 -> 0.0
+            # current_timestep is 1000.0 -> 0.0
             for i, current_timestep in enumerate(timesteps):
-                # 1.0 -> 0.0
+                # 1000 -> 0.0
                 timestep_input = current_timestep.repeat(batch_size).to(
                     execution_device
                 )
@@ -317,17 +371,13 @@ class Wan22(nn.Module):
                 else:
                     latents_input = latents
 
-                # prepare the prompt features
-                prompt_embeddings, prompt_mask = self.prepare_encoder_hidden_states(
-                    encoder_output=encoder_output,
-                    do_cfg=do_cfg,
-                )
-
                 # predict velocity
                 velocity_pred = self.denoiser(
                     latents=latents_input,
                     context=prompt_embeddings,
                     timesteps=timestep_input,
+                    seq_len=seq_len,
+                    # TODO: image embed input
                 )
 
                 # perform cfg
@@ -361,7 +411,7 @@ class Wan22(nn.Module):
             self.vae.to(execution_device)  # type: ignore
 
         # 5. Decode latents
-        videos = self.decode_video(latents)
+        videos = self.decode_videos(latents)
         if do_offloading:
             self.vae.to("cpu")  # type: ignore
             torch.cuda.empty_cache()

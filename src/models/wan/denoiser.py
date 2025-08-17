@@ -660,7 +660,7 @@ class DiT(nn.Module):
 
         # time embeddings
         if timesteps.dim() == 1:
-            timesteps = timesteps.expand(timesteps.size(0), seq_len)
+            timesteps = timesteps.unsqueeze(-1).expand(timesteps.size(0), seq_len)
 
         with torch.autocast("cuda", dtype=torch.float32):
             batch_size = timesteps.size(0)
