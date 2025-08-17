@@ -83,9 +83,9 @@ def test_wan_rmsnorm():
 
 
 def test_load_tokenizer():
-    t3 = AutoTokenizer.from_pretrained("google/umt5-xxl")
-    t2 = T5TokenizerFast.from_pretrained("google/umt5-xxl")
-    t1 = T5Tokenizer.from_pretrained("google/umt5-xxl")
+    _t3 = AutoTokenizer.from_pretrained("google/umt5-xxl")
+    _t2 = T5TokenizerFast.from_pretrained("google/umt5-xxl")
+    _t1 = T5Tokenizer.from_pretrained("google/umt5-xxl")
 
 
 def test_load_text_encoder():
