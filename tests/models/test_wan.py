@@ -7,6 +7,9 @@ from transformers import T5TokenizerFast, T5Tokenizer, AutoTokenizer
 
 from src.modules.norm import FP32LayerNorm, FP32RMSNorm
 from src.models.wan.text_encoder import TextEncoder
+from src.models.wan.denoiser import Denoiser
+from src.models.wan import Wan22TI2V5BDenoiserConfig
+from src.models.wan.util import convert_from_original_key, convert_to_original_key
 
 
 def test_wan_layernorm():
@@ -91,11 +94,15 @@ def test_load_text_encoder():
 
     state_dict = load_file("models/wan2.2-umt5-xxl.safetensors")
 
-    text_encoder.model.load_state_dict(
-        state_dict,
+    text_encoder.load_state_dict(
+        {
+            convert_from_original_key(k, "text_encoder"): v
+            for k, v in state_dict.items()
+        },
         strict=True,
         assign=True,
     )
+    text_encoder.to("cuda:0")
 
     with torch.inference_mode():
         outputs = text_encoder.encode_prompts(
@@ -104,3 +111,29 @@ def test_load_text_encoder():
         )
 
     assert outputs.positive_embeddings.shape == (1, 5, 4096)
+
+
+def test_load_denoiser():
+    config = Wan22TI2V5BDenoiserConfig()
+
+    with init_empty_weights():
+        denoiser = Denoiser(config)
+
+    state_dict = load_file("models/wan2.2_ti2v_5B_fp16.safetensors")
+    denoiser.load_state_dict(
+        {convert_from_original_key(k, "denoiser"): v for k, v in state_dict.items()},
+        strict=True,
+        assign=True,
+    )
+    denoiser.to("cuda:0")
+
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        # [batch, channel, frames, height, width]
+        latents = torch.randn(1, 48, 16, 24, 32).to("cuda:0")
+        timesteps = torch.tensor([1000]).to("cuda:0")
+        context = torch.randn(1, 128, 4096).to("cuda:0")
+        seq_len = (16 // 1) * (24 // 2) * (32 // 2) + 128
+
+        outputs = denoiser(latents, timesteps, context, seq_len)
+        # outputs is a nested tensor
+        assert outputs[0].shape == (48, 16, 24, 32)

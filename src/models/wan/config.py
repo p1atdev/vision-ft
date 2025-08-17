@@ -7,7 +7,7 @@ from ...utils.dtype import str_to_dtype
 
 
 class DenoiserConfig(BaseModel):
-    type: str
+    type: Literal["ti2v", "t2v", "i2v"] = "ti2v"
 
     in_channels: int = 48
     out_channels: int = 48
@@ -15,7 +15,7 @@ class DenoiserConfig(BaseModel):
     hidden_dim: int = 3072
     ffn_dim: int = 14336
     freq_dim: int = 256
-    text_dim: int = 512
+    text_dim: int = 4096
 
     num_heads: int = 24
     num_layers: int = 30
@@ -34,11 +34,13 @@ class DenoiserConfig(BaseModel):
 
 # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B/blob/main/config.json
 class Wan22TI2V5BDenoiserConfig(DenoiserConfig):
-    type: Literal["2.2-ti2v-5b"] = "2.2-ti2v-5b"
+    type: Literal["ti2v"] = "ti2v"
+    variant: Literal["2.2-ti2v-5b"] = "2.2-ti2v-5b"
 
     hidden_dim: int = 3072
     ffn_dim: int = 14336
     freq_dim: int = 256
+    text_dim: int = 4096
 
     num_heads: int = 24
     num_layers: int = 30

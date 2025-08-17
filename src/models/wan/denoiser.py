@@ -341,7 +341,7 @@ class AdaLayerNormZero(nn.Module):
         self.eps = eps
 
         # layers
-        self.norm1 = FP32LayerNorm(dim, eps=eps)
+        self.norm1 = FP32LayerNorm(dim, eps=eps, elementwise_affine=False)
         self.self_attn = SelfAttention(
             dim,
             num_heads,
@@ -361,7 +361,7 @@ class AdaLayerNormZero(nn.Module):
             qk_norm=qk_norm,
             eps=eps,
         )
-        self.norm2 = FP32LayerNorm(dim, eps=eps)
+        self.norm2 = FP32LayerNorm(dim, eps=eps, elementwise_affine=False)
         self.ffn = nn.Sequential(
             nn.Linear(dim, ffn_dim),
             nn.GELU(approximate="tanh"),
@@ -394,10 +394,7 @@ class AdaLayerNormZero(nn.Module):
         with torch.autocast(device_type="cuda", dtype=torch.float32):
             shift_self, scale_self, gate_self, shift_mlp, scale_mlp, gate_mlp = (
                 self.modulation.unsqueeze(0) + timestep_embed
-            ).chunk(
-                6,
-                dim=2,
-            )
+            ).chunk(6, dim=2)
 
         assert shift_self.dtype == torch.float32
 
@@ -448,7 +445,7 @@ class FinalAdaLayerNorm(nn.Module):
 
         # layers
         out_dim = math.prod(patch_size) * out_dim
-        self.norm = FP32LayerNorm(dim, eps=eps)
+        self.norm = FP32LayerNorm(dim, eps=eps, elementwise_affine=False)
         self.head = nn.Linear(dim, out_dim)
 
         # modulation
@@ -457,18 +454,18 @@ class FinalAdaLayerNorm(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        timestep_embed: torch.Tensor,
+        timestep_element: torch.Tensor,
     ):
         r"""
         Args:
-            x(Tensor): Shape [B, L1, C]
-            e(Tensor): Shape [B, L1, C]
+            hidden_states(Tensor): Shape [B, L1, C]
+            timestep_element(Tensor): Shape [B, L1, C]
         """
-        assert timestep_embed.dtype == torch.float32
+        assert timestep_element.dtype == torch.float32
 
         with torch.autocast(device_type="cuda", dtype=torch.float32):
             shift, scale = (
-                self.modulation.unsqueeze(0) + timestep_embed.unsqueeze(2)
+                self.modulation.unsqueeze(0) + timestep_element.unsqueeze(2)
             ).chunk(2, dim=2)
 
             hidden_states = self.head(
@@ -578,7 +575,7 @@ class DiT(nn.Module):
 
     def forward(
         self,
-        latents: torch.Tensor,
+        latents: torch.Tensor,  # nested tensor
         timesteps: torch.Tensor,
         context: torch.Tensor,
         seq_len: int,
@@ -668,17 +665,20 @@ class DiT(nn.Module):
             batch_size = timesteps.size(0)
             timesteps = timesteps.flatten()
 
-            _timestep_embed: torch.Tensor = self.time_embedding(
+            timestep_element: torch.Tensor = self.time_embedding(
                 sinusoidal_embedding_1d(self.freq_dim, timesteps)
                 .unflatten(0, (batch_size, seq_len))
                 .float()
             )
             timestep_embed: torch.Tensor = self.time_projection(
-                _timestep_embed
+                timestep_element
             ).unflatten(2, (6, self.dim))
+            # (batch_size, seq_len, dim * 6)
+            # -> (batch_size, seq_len, 6, dim)
+
             assert (
                 timestep_embed.dtype == torch.float32
-                and _timestep_embed.dtype == torch.float32
+                and timestep_element.dtype == torch.float32
             )
 
         # context
@@ -722,12 +722,14 @@ class DiT(nn.Module):
                 patches = block(patches, **kwargs)
 
         # head
-        patches = self.head(patches, timestep_embed)
+        patches = self.head(patches, timestep_element)
 
         # unpatchify
         latents_list = self.unpatchify(patches, grid_sizes)
 
-        return [latents.float() for latents in latents_list]
+        return torch.nested.as_nested_tensor(
+            [latents.float() for latents in latents_list]
+        )
 
     def unpatchify(
         self,
@@ -814,14 +816,9 @@ class DiT(nn.Module):
         nn.init.zeros_(self.head.head.weight)
 
 
-class Denoiser(nn.Module):
+class Denoiser(DiT):
     def __init__(self, config: DenoiserConfig):
-        super().__init__()
-
-        self.config = config
-
-        # model
-        self.model = DiT(
+        super().__init__(
             model_type=config.type,
             patch_size=config.patch_size,
             text_len=config.text_length,
@@ -838,6 +835,8 @@ class Denoiser(nn.Module):
             cross_attn_norm=True,
             eps=config.norm_eps,
         )
+
+        self.config = config
 
     def set_gradient_checkpointing(self, value: bool):
         """
