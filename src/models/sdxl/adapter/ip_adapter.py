@@ -231,14 +231,16 @@ class IPAdapterCrossAttentionSDXL(Adapter):
                 value=ip_value,
                 mask=None,
             )
-            hidden_states = hidden_states + self.ip_scale * ip_hidden_states
+            new_hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
             if self.attn_renorm:
                 # renormalize the feature to match the original feature norm
                 hidden_states = self.renorm_feature(
-                    original_feature=latents,
-                    new_feature=hidden_states,
+                    original_feature=hidden_states,
+                    new_feature=new_hidden_states,
                 )
+            else:
+                hidden_states = new_hidden_states
 
         hidden_states = self.to_out(hidden_states)
 
