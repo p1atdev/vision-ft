@@ -134,8 +134,9 @@ LATENT_DIM = 48
 
 
 class VAE(AutoencoderKLWan):
-    temporal_compression_ratio = TEMPORAL_COMPRESSION_RATIO
-    spatial_compression_ratio = SPATIAL_COMPRESSION_RATIO
+    # conflicts with original AutoencoderKLWan's attributes
+    _temporal_compression_ratio = TEMPORAL_COMPRESSION_RATIO
+    _spatial_compression_ratio = SPATIAL_COMPRESSION_RATIO
     shift_factor = torch.tensor(LATENT_MEAN, requires_grad=False).view(
         1, LATENT_DIM, 1, 1, 1
     )

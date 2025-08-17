@@ -39,4 +39,4 @@ class Scheduler:
         sigma: torch.Tensor,
         next_sigma: torch.Tensor,
     ) -> torch.Tensor:
-        return latent + velocity_pred * (sigma - next_sigma)
+        return latent + velocity_pred * (next_sigma - sigma)

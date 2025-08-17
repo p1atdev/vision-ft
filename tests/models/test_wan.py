@@ -12,6 +12,7 @@ from src.models.wan.vae import VAE
 from src.models.wan.pipeline import Wan22
 from src.models.wan import Wan22TI2V5BDenoiserConfig, WanConfig
 from src.models.wan.util import convert_from_original_key, convert_to_original_key
+from src.utils.tensor import tensor_to_videos
 
 
 def test_wan_layernorm():
@@ -159,13 +160,25 @@ def test_load_vae():
             1,  # batch
             3,  # channels
             24,  # frames
-            720,  # height
-            1280,  # width
+            480,  # height
+            720,  # width
         ).to("cuda:0")
 
         # encode
         latents = vae.encode(video, return_dict=True).latent_dist.sample()
-        assert latents.shape == (1, 48, 24 // 4, 720 // 16, 1280 // 16)
+        print(vae.spatial_compression_ratio)
+        assert latents.shape == (
+            1,
+            48,
+            24 // vae._temporal_compression_ratio,
+            480 // vae._spatial_compression_ratio,
+            720 // vae._spatial_compression_ratio,
+        )
+
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        # encode
+        decoded = vae.decode(latents, return_dict=True).sample
+        _videos = tensor_to_videos(decoded)
 
 
 def test_load_pipeline():

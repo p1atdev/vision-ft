@@ -116,13 +116,31 @@ class Wan22(nn.Module):
         seed: int | None = None,
     ):
         latent_channels = self.denoiser.config.in_channels
+        frames = (
+            frames
+            // self.vae._temporal_compression_ratio
+            * self.vae._temporal_compression_ratio
+        )
 
         shape = (
             batch_size,
             latent_channels,
-            frames // self.vae.temporal_compression_ratio + 1,
-            height // self.vae.spatial_compression_ratio,
-            width // self.vae.spatial_compression_ratio,
+            (frames - 1) // self.vae._temporal_compression_ratio + 1,
+            height // self.vae._spatial_compression_ratio,
+            width // self.vae._spatial_compression_ratio,
+        )
+
+        frame_patch_size, height_patch_size, width_patch_size = (
+            self.denoiser.config.patch_size
+        )
+        assert shape[2] % frame_patch_size == 0, (
+            f"Frames {shape[2]} must be divisible by frame patch size {frame_patch_size}."
+        )
+        assert shape[3] % height_patch_size == 0, (
+            f"Height {shape[3]} must be divisible by height patch size {height_patch_size}."
+        )
+        assert shape[4] % width_patch_size == 0, (
+            f"Width {shape[4]} must be divisible by width patch size {width_patch_size}."
         )
 
         latents = tensor_utils.incremental_seed_randn(
@@ -162,7 +180,7 @@ class Wan22(nn.Module):
         sample = encode_output.latent_dist.sample()  # type: ignore
         latents = (
             sample - self.vae.shift_factor.to(sample.device)
-        ) * self.vae.scaling_factor.to(sample.device)
+        ) / self.vae.scaling_factor.to(sample.device)
 
         return latents
 
@@ -172,7 +190,7 @@ class Wan22(nn.Module):
         latents: torch.Tensor,
     ) -> list[Image.Image]:
         video_tensor = self.vae.decode(
-            latents / self.vae.scaling_factor.to(latents.device)
+            latents * self.vae.scaling_factor.to(latents.device)
             + self.vae.shift_factor.to(latents.device),
             return_dict=False,
         )[0]
