@@ -64,7 +64,7 @@ class LinearImageProjector(nn.Module):
         # initialize layer norm
         if self.norm.weight is not None:
             nn.init.ones_(self.norm.weight)
-        if self.norm.bias is not None:
+        if hasattr(self.norm, "bias") and self.norm.bias is not None:
             nn.init.zeros_(self.norm.bias)
 
     def forward(self, features: torch.Tensor):
@@ -116,7 +116,7 @@ class MLPImageProjector(nn.Module):
 
         if self.norm.weight is not None:
             nn.init.ones_(self.norm.weight)
-        if self.norm.bias is not None:
+        if hasattr(self.norm, "bias") and self.norm.bias is not None:
             nn.init.zeros_(self.norm.bias)
 
     def forward(self, features: torch.Tensor):
@@ -319,7 +319,7 @@ class ResamplerProjector(nn.Module):
             nn.init.zeros_(self.proj_out.bias)
         if self.norm_out.weight is not None:
             nn.init.ones_(self.norm_out.weight)
-        if self.norm_out.bias is not None:
+        if hasattr(self.norm_out, "bias") and self.norm_out.bias is not None:
             nn.init.zeros_(self.norm_out.bias)
 
     def _forward_layer(self, module: nn.Module, *args):
