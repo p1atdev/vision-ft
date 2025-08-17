@@ -5,6 +5,8 @@ import torch.nn as nn
 
 import numpy as np
 
+VIDEO = list[Image.Image]
+
 
 def incremental_seed_randn(
     shape: tuple[int, ...],
@@ -63,6 +65,29 @@ def images_to_tensor(
     )
 
 
+def videos_to_tensor(
+    videos: list[VIDEO],
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    # 0~255 -> -1~1
+    return torch.stack(
+        [
+            torch.stack(
+                [
+                    torch.tensor(np.array(frame), dtype=dtype, device=device).permute(
+                        2, 0, 1
+                    )
+                    / 127.5
+                    - 1.0
+                    for frame in video
+                ]
+            )
+            for video in videos
+        ]
+    )
+
+
 def tensor_to_images(
     tensor: torch.Tensor,
 ) -> list[Image.Image]:
@@ -79,6 +104,28 @@ def tensor_to_images(
     image_array = tensor.cpu().float().numpy().astype(np.uint8)
 
     return [Image.fromarray(image) for image in image_array]
+
+
+def tensor_to_videos(
+    tensor: torch.Tensor,  # [B, C, F, H, W]
+) -> list[VIDEO]:
+    """
+    Convert a tensor to a list of videos.
+    Each video is represented as a list of images.
+    """
+    # -1~1 -> 0~255
+
+    # denormalize
+    tensor = tensor.clamp(-1.0, 1.0)
+    tensor = (tensor + 1.0) / 2.0 * 255.0
+
+    # permute
+    tensor = tensor.permute(0, 2, 3, 4, 1)  # [B, C, F, H, W] -> [B, F, H, W, C]
+
+    # convert to numpy array
+    video_array = tensor.cpu().float().numpy().astype(np.uint8)
+
+    return [list(Image.fromarray(frame) for frame in video) for video in video_array]
 
 
 def remove_orig_mod_prefix(name: str) -> str:

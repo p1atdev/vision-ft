@@ -585,21 +585,22 @@ class DiT(nn.Module):
         Forward pass through the diffusion model
 
         Args:
-            x (List[Tensor]):
-                List of input video tensors, each with shape [C_in, F, H, W]
-            t (Tensor):
+            latents (NestedTensor):
+                List of input video tensors, each with shape [b, C_in, F, H, W]
+            timesteps (Tensor):
                 Diffusion timesteps tensor of shape [B]
-            context (List[Tensor]):
-                List of text embeddings each with shape [L, C]
+            context (NestedTensor):
+                List of text embeddings each with shape [b, L, C]
             seq_len (`int`):
                 Maximum sequence length for positional encoding
-            y (List[Tensor], *optional*):
+            image_embed (List[Tensor], *optional*):
                 Conditional video inputs for image-to-video mode, same shape as x
 
         Returns:
-            List[Tensor]:
-                List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
+            NestedTensor:
+                List of denoised video tensors with original input shapes [b, C_out, F, H / 8, W / 8]
         """
+
         if self.model_type == "i2v":
             assert latents is not None
 

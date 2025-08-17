@@ -9,7 +9,8 @@ from src.modules.norm import FP32LayerNorm, FP32RMSNorm
 from src.models.wan.text_encoder import TextEncoder
 from src.models.wan.denoiser import Denoiser
 from src.models.wan.vae import VAE
-from src.models.wan import Wan22TI2V5BDenoiserConfig
+from src.models.wan.pipeline import Wan22
+from src.models.wan import Wan22TI2V5BDenoiserConfig, WanConfig
 from src.models.wan.util import convert_from_original_key, convert_to_original_key
 
 
@@ -165,3 +166,14 @@ def test_load_vae():
         # encode
         latents = vae.encode(video, return_dict=True).latent_dist.sample()
         assert latents.shape == (1, 48, 24 // 4, 720 // 16, 1280 // 16)
+
+
+def test_load_pipeline():
+    config = WanConfig(
+        denoiser_path="models/wan2.2_ti2v_5B_fp16.safetensors",
+        text_encoder_path="models/wan2.2-umt5-xxl.safetensors",
+        vae_path="models/wan2.2-vae.safetensors",
+    )
+
+    model = Wan22.from_checkpoint(config)
+    # model.to("cuda:0")
