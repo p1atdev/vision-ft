@@ -109,6 +109,7 @@ class Lumina2(nn.Module):
         latent_channels = self.denoiser.config.in_channels
 
         shape = (
+            1,
             latent_channels,
             int(height) // self.vae.compression_ratio,
             int(width) // self.vae.compression_ratio,
@@ -118,7 +119,7 @@ class Lumina2(nn.Module):
             seed=seed,
             dtype=dtype,
             device=device,
-        )
+        )[0]  # [C, H, W]
 
         return latents
 
