@@ -13,6 +13,24 @@ from ..attention import AttentionImplementation, scaled_dot_product_attention
 from ..norm import FP32LayerNorm
 
 
+NORMALIZATION_TYPES = Literal["layernorm", "layer", "rmsnorm", "rms"]
+
+
+def get_norm_layer(
+    normalization: NORMALIZATION_TYPES,
+    **kwargs,
+) -> nn.Module:
+    """
+    Get the normalization layer based on the normalization type.
+    """
+    if normalization.lower() in ["layernorm", "layer"]:
+        return nn.LayerNorm(**kwargs)
+    elif normalization.lower() == ["rmsnorm", "rms"]:
+        return nn.RMSNorm(**kwargs)
+    else:
+        raise ValueError(f"Unsupported normalization type: {normalization}")
+
+
 # https://github.com/tencent-ailab/IP-Adapter/blob/62e4af9d0c1ac7d5f8dd386a0ccf2211346af1a2/ip_adapter/ip_adapter.py#L28-L46
 class LinearImageProjector(nn.Module):
     def __init__(
@@ -20,6 +38,7 @@ class LinearImageProjector(nn.Module):
         in_features: int,
         cross_attention_dim: int = 2049,
         num_ip_tokens: int = 4,
+        normalization: NORMALIZATION_TYPES = "layernorm",
     ):
         super().__init__()
 
@@ -31,7 +50,10 @@ class LinearImageProjector(nn.Module):
             in_features,
             cross_attention_dim * num_ip_tokens,
         )
-        self.norm = FP32LayerNorm(cross_attention_dim)
+        self.norm = get_norm_layer(
+            normalization,
+            normalized_shape=cross_attention_dim,
+        )
 
     def init_weights(self):
         # initialize linear layers
@@ -63,6 +85,7 @@ class MLPImageProjector(nn.Module):
         mlp_ratio: float = 1.0,
         cross_attention_dim: int = 768,
         num_style_tokens: int = 4,
+        normalization: NORMALIZATION_TYPES = "layernorm",
     ):
         super().__init__()
 
@@ -78,7 +101,10 @@ class MLPImageProjector(nn.Module):
                 cross_attention_dim * num_style_tokens,
             ),
         )
-        self.norm = FP32LayerNorm(cross_attention_dim)
+        self.norm = get_norm_layer(
+            normalization,
+            normalized_shape=cross_attention_dim,
+        )
 
     def init_weights(self):
         nn.init.normal_(self.mlp[0].weight, mean=0.0, std=0.02)
@@ -111,6 +137,8 @@ class PerceiverAttention(nn.Module):
         in_features: int,
         num_heads: int,
         attention_backend: AttentionImplementation = "sdpa",
+        normalization: NORMALIZATION_TYPES = "layernorm",
+        qk_norm: bool = False,
     ):
         super().__init__()
 
@@ -118,9 +146,27 @@ class PerceiverAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = in_features // num_heads
         self.attention_backend: AttentionImplementation = attention_backend
+        self.qk_norm = qk_norm
 
-        self.norm1 = FP32LayerNorm(in_features)  # norm for image features
-        self.norm2 = FP32LayerNorm(in_features)  # norm for latent features
+        self.norm1 = get_norm_layer(
+            normalization,
+            normalized_shape=in_features,
+        )  # norm for image features
+        self.norm2 = get_norm_layer(
+            normalization,
+            normalized_shape=in_features,
+        )  # norm for latent features
+
+        # QKNorm
+        if qk_norm:
+            self.norm_q = get_norm_layer(
+                normalization,
+                normalized_shape=self.head_dim,
+            )
+            self.norm_k = get_norm_layer(
+                normalization,
+                normalized_shape=self.head_dim,
+            )
 
         self.to_q = nn.Linear(in_features, in_features, bias=False)
         self.to_kv = nn.Linear(in_features, in_features * 2, bias=False)
@@ -152,6 +198,10 @@ class PerceiverAttention(nn.Module):
         key = self._pre_attn_reshape(key)
         value = self._pre_attn_reshape(value)
 
+        if self.qk_norm:
+            query = self.norm_q(query)
+            key = self.norm_k(key)
+
         attn = scaled_dot_product_attention(
             query,
             key,
@@ -165,9 +215,13 @@ class PerceiverAttention(nn.Module):
         return attn
 
 
-def feed_forward_factory(in_features: int, mlp_ratio: float = 4.0):
+def feed_forward_factory(
+    in_features: int,
+    mlp_ratio: float = 4.0,
+    normalization: NORMALIZATION_TYPES = "layernorm",
+):
     return nn.Sequential(
-        nn.LayerNorm(in_features),
+        get_norm_layer(normalization, normalized_shape=in_features),
         nn.Linear(in_features, int(in_features * mlp_ratio), bias=False),
         nn.GELU(),
         nn.Linear(int(in_features * mlp_ratio), in_features, bias=False),
@@ -186,6 +240,8 @@ class ResamplerProjector(nn.Module):
         depth: int = 4,
         attention_backend: AttentionImplementation = "sdpa",
         gradient_checkpointing: bool = False,
+        normalization: NORMALIZATION_TYPES = "layernorm",
+        qk_norm: bool = False,
     ):
         super().__init__()
 
@@ -200,7 +256,10 @@ class ResamplerProjector(nn.Module):
         self.proj_in = nn.Linear(in_features, dim)
 
         self.proj_out = nn.Linear(dim, dim)
-        self.norm_out = nn.LayerNorm(dim)
+        self.norm_out = get_norm_layer(
+            normalization,
+            normalized_shape=dim,
+        )
 
         self.layers = nn.ModuleList(
             [
@@ -210,8 +269,14 @@ class ResamplerProjector(nn.Module):
                             in_features=dim,
                             num_heads=num_heads,
                             attention_backend=attention_backend,
+                            normalization=normalization,
+                            qk_norm=qk_norm,
                         ),
-                        feed_forward_factory(in_features=dim, mlp_ratio=mlp_ratio),
+                        feed_forward_factory(
+                            in_features=dim,
+                            mlp_ratio=mlp_ratio,
+                            normalization=normalization,
+                        ),
                     ]
                 )
                 for _ in range(depth)
@@ -232,6 +297,11 @@ class ResamplerProjector(nn.Module):
                     nn.init.ones_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+
+            elif isinstance(module, nn.RMSNorm):
+                # initialize RMSNorm
+                if module.weight is not None:
+                    nn.init.ones_(module.weight)
 
         self.latents.data = (
             torch.randn(1, self.num_ip_tokens, self.cross_attention_dim)
@@ -402,6 +472,14 @@ class IPAdapterManager(AdapterManager):
                 depth=self.adapter_config.projector_args.get("depth", 4),
                 gradient_checkpointing=self.adapter_config.projector_args.get(
                     "gradient_checkpointing",
+                    False,
+                ),
+                normalization=self.adapter_config.projector_args.get(
+                    "normalization",
+                    "layernorm",
+                ),
+                qk_norm=self.adapter_config.projector_args.get(
+                    "qk_norm",
                     False,
                 ),
             )
