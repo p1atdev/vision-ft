@@ -25,7 +25,7 @@ def get_norm_layer(
     """
     if normalization.lower() in ["layernorm", "layer"]:
         return nn.LayerNorm(**kwargs)
-    elif normalization.lower() == ["rmsnorm", "rms"]:
+    elif normalization.lower() in ["rmsnorm", "rms"]:
         return nn.RMSNorm(**kwargs)
     else:
         raise ValueError(f"Unsupported normalization type: {normalization}")
