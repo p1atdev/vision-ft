@@ -1,7 +1,12 @@
 import torch
 import torch.nn as nn
 
+from accelerate import init_empty_weights
+from safetensors.torch import load_file
+from transformers import T5TokenizerFast, T5Tokenizer, AutoTokenizer
+
 from src.modules.norm import FP32LayerNorm, FP32RMSNorm
+from src.models.wan.text_encoder import TextEncoder
 
 
 def test_wan_layernorm():
@@ -72,3 +77,30 @@ def test_wan_rmsnorm():
     ref_out = ref(x)
     model_out = model(x)
     assert torch.allclose(ref_out, model_out, atol=1e-9)
+
+
+def test_load_tokenizer():
+    t3 = AutoTokenizer.from_pretrained("google/umt5-xxl")
+    t2 = T5TokenizerFast.from_pretrained("google/umt5-xxl")
+    t1 = T5Tokenizer.from_pretrained("google/umt5-xxl")
+
+
+def test_load_text_encoder():
+    with init_empty_weights():
+        text_encoder = TextEncoder.from_default()
+
+    state_dict = load_file("models/wan2.2-umt5-xxl.safetensors")
+
+    text_encoder.model.load_state_dict(
+        state_dict,
+        strict=True,
+        assign=True,
+    )
+
+    with torch.inference_mode():
+        outputs = text_encoder.encode_prompts(
+            prompts=["photo of a cat"],
+            use_negative_prompts=False,
+        )
+
+    assert outputs.positive_embeddings.shape == (1, 5, 4096)

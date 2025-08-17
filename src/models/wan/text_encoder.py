@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import PreTrainedTokenizerBase, T5Tokenizer
+from transformers import PreTrainedTokenizerBase, T5TokenizerFast
 
 from ...modules.norm import FP32LayerNorm
 from ..utils import PromptType, TextEncodingOutput
@@ -20,13 +20,14 @@ DEFAULT_TEXT_ENCODER_CONFIG = {
     "dim_attn": 4096,
     "dim_ffn": 10240,
     "num_heads": 64,
-    "encoder_layers": 26,
+    "num_layers": 24,
     "num_buckets": 32,
     "shared_pos": False,
     "dropout": 0.1,
 }
-DEFAULT_TOKENIZER_REPO = "google/umt5-xxl"
-DEFAULT_TOKENIZER_FOLDER = "/"
+DEFAULT_TEXT_ENCODER_CLASS = T5TokenizerFast
+DEFAULT_TOKENIZER_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+DEFAULT_TOKENIZER_FOLDER = "tokenizer"
 DEFAULT_MAX_TOKEN_LENGTH = 512
 
 
@@ -40,7 +41,7 @@ def fp16_clamp(x):
 def init_weights(m):
     if isinstance(m, FP32LayerNorm):
         nn.init.ones_(m.weight)
-    elif isinstance(m, T5EncoderModel):
+    elif isinstance(m, T5Encoder):
         nn.init.normal_(m.token_embedding.weight, std=1.0)
     elif isinstance(m, T5FeedForward):
         nn.init.normal_(m.gate[0].weight, std=m.dim**-0.5)
@@ -57,18 +58,18 @@ def init_weights(m):
         )
 
 
-class GELU(nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return (
-            0.5
-            * x
-            * (
-                1.0
-                + torch.tanh(
-                    math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))
-                )
-            )
-        )
+# class GELU(nn.Module):
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         return (
+#             0.5
+#             * x
+#             * (
+#                 1.0
+#                 + torch.tanh(
+#                     math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))
+#                 )
+#             )
+#         )
 
 
 class T5Attention(nn.Module):
@@ -140,7 +141,11 @@ class T5FeedForward(nn.Module):
         self.dim_ffn = dim_ffn
 
         # layers
-        self.gate = nn.Sequential(nn.Linear(dim, dim_ffn, bias=False), GELU())
+        self.gate = nn.Sequential(
+            nn.Linear(dim, dim_ffn, bias=False),
+            # GELU(),
+            nn.GELU(),
+        )
         self.fc1 = nn.Linear(dim, dim_ffn, bias=False)
         self.fc2 = nn.Linear(dim_ffn, dim, bias=False)
         self.dropout = nn.Dropout(dropout)
@@ -175,9 +180,9 @@ class T5SelfAttention(nn.Module):
         self.shared_pos = shared_pos
 
         # layers
-        self.norm1 = FP32LayerNorm(dim)
+        self.norm1 = FP32LayerNorm(dim, bias=False)
         self.attn = T5Attention(dim, dim_attn, num_heads, dropout)
-        self.norm2 = FP32LayerNorm(dim)
+        self.norm2 = FP32LayerNorm(dim, bias=False)
         self.ffn = T5FeedForward(dim, dim_ffn, dropout)
 
         self.pos_embedding = (
@@ -191,58 +196,6 @@ class T5SelfAttention(nn.Module):
 
         x = fp16_clamp(x + self.attn(self.norm1(x), mask=mask, pos_bias=e))
         x = fp16_clamp(x + self.ffn(self.norm2(x)))
-
-        return x
-
-
-class T5CrossAttention(nn.Module):
-    def __init__(
-        self,
-        dim: int,
-        dim_attn: int,
-        dim_ffn: int,
-        num_heads: int,
-        num_buckets: int,
-        shared_pos: bool = True,
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-
-        self.dim = dim
-        self.dim_attn = dim_attn
-        self.dim_ffn = dim_ffn
-        self.num_heads = num_heads
-        self.num_buckets = num_buckets
-        self.shared_pos = shared_pos
-
-        # layers
-        self.norm1 = FP32LayerNorm(dim)
-        self.self_attn = T5Attention(dim, dim_attn, num_heads, dropout)
-        self.norm2 = FP32LayerNorm(dim)
-        self.cross_attn = T5Attention(dim, dim_attn, num_heads, dropout)
-        self.norm3 = FP32LayerNorm(dim)
-        self.ffn = T5FeedForward(dim, dim_ffn, dropout)
-        self.pos_embedding = (
-            None
-            if shared_pos
-            else T5RelativeEmbedding(num_buckets, num_heads, bidirectional=False)
-        )
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        mask: torch.Tensor | None = None,
-        encoder_states: torch.Tensor | None = None,
-        encoder_mask: torch.Tensor | None = None,
-        pos_bias: torch.Tensor | None = None,
-    ):
-        e = self.pos_embedding(x.size(1), x.size(1)) if self.pos_embedding else pos_bias
-        x = fp16_clamp(x + self.self_attn(self.norm1(x), mask=mask, pos_bias=e))
-        x = fp16_clamp(
-            x
-            + self.cross_attn(self.norm2(x), context=encoder_states, mask=encoder_mask)
-        )
-        x = fp16_clamp(x + self.ffn(self.norm3(x)))
 
         return x
 
@@ -304,7 +257,7 @@ class T5RelativeEmbedding(nn.Module):
 class T5Encoder(nn.Module):
     def __init__(
         self,
-        vocab: nn.Embedding,
+        vocab_size: int,
         dim: int,
         dim_attn: int,
         dim_ffn: int,
@@ -325,9 +278,7 @@ class T5Encoder(nn.Module):
         self.shared_pos = shared_pos
 
         # layers
-        self.token_embedding = (
-            vocab if isinstance(vocab, nn.Embedding) else nn.Embedding(vocab, dim)
-        )
+        self.token_embedding = nn.Embedding(vocab_size, dim)
         self.pos_embedding = (
             T5RelativeEmbedding(num_buckets, num_heads, bidirectional=True)
             if shared_pos
@@ -342,78 +293,44 @@ class T5Encoder(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-        self.norm = FP32LayerNorm(dim)
+        self.norm = FP32LayerNorm(dim, bias=False)
 
         # initialize weights
         self.apply(init_weights)
 
-    def forward(self, ids: torch.Tensor, mask: torch.Tensor | None = None):
-        x = self.token_embedding(ids)
-        x = self.dropout(x)
-        e = self.pos_embedding(x.size(1), x.size(1)) if self.pos_embedding else None
-        for block in self.blocks:
-            x = block(x, mask, pos_bias=e)
-        x = self.norm(x)
-        x = self.dropout(x)
-
-        return x
-
-
-class T5EncoderModel(nn.Module):
-    def __init__(
-        self,
-        vocab_size: int,
-        dim: int,
-        dim_attn: int,
-        dim_ffn: int,
-        num_heads: int,
-        encoder_layers: int,
-        num_buckets: int,
-        shared_pos: bool = True,
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-
-        self.vocab_size = vocab_size
-        self.dim = dim
-        self.dim_attn = dim_attn
-        self.dim_ffn = dim_ffn
-        self.num_heads = num_heads
-        self.encoder_layers = encoder_layers
-        self.num_buckets = num_buckets
-
-        # layers
-        self.token_embedding = nn.Embedding(vocab_size, dim)
-        self.encoder = T5Encoder(
-            self.token_embedding,
-            dim,
-            dim_attn,
-            dim_ffn,
-            num_heads,
-            encoder_layers,
-            num_buckets,
-            shared_pos,
-            dropout,
-        )
-
-        # initialize weights
-        self.apply(init_weights)
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
     def forward(
         self,
-        encoder_ids: torch.Tensor,
-        encoder_mask: torch.Tensor | None = None,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
     ):
-        hidden_states = self.encoder(encoder_ids, encoder_mask)
+        embedding = self.token_embedding(input_ids)
+
+        hidden_states = self.dropout(embedding)
+
+        e = (
+            self.pos_embedding(hidden_states.size(1), hidden_states.size(1))
+            if self.pos_embedding
+            else None
+        )
+
+        for block in self.blocks:
+            hidden_states = block(hidden_states, attention_mask, pos_bias=e)
+
+        hidden_states = self.norm(hidden_states)
+        hidden_states = self.dropout(hidden_states)
 
         return hidden_states
 
 
 class TextEncoder(nn.Module):
-    model: T5EncoderModel
+    model: T5Encoder
     tokenizer: PreTrainedTokenizerBase
 
-    def __init__(self, model: T5EncoderModel, tokenizer: PreTrainedTokenizerBase):
+    def __init__(self, model: T5Encoder, tokenizer: PreTrainedTokenizerBase):
         super().__init__()
 
         self.model = model
@@ -464,6 +381,7 @@ class TextEncoder(nn.Module):
             max_length=max_token_length,
             padding="longest",
             truncation=True,
+            add_special_tokens=True,  # required
         ).to(self.model.device)
 
         # 2.5. Move input_ids to model device
@@ -491,14 +409,12 @@ class TextEncoder(nn.Module):
     def from_default(
         cls,
     ):
-        text_encoder = T5EncoderModel(**DEFAULT_TEXT_ENCODER_CONFIG)
+        text_encoder = T5Encoder(**DEFAULT_TEXT_ENCODER_CONFIG)
 
-        tokenizer = T5Tokenizer.from_pretrained(
+        tokenizer = T5TokenizerFast.from_pretrained(
             DEFAULT_TOKENIZER_REPO,
             subfolder=DEFAULT_TOKENIZER_FOLDER,
-            use_fast=False,  # use slow tokenizer
             padding_side="right",
-            add_special_tokens=True,
         )
 
         return cls(
