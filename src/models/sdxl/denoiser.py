@@ -43,6 +43,7 @@ class SelfAttention(nn.Module):
         self.inner_dim = num_heads * head_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
+        self.dropout = dropout
         self.attn_implementation: AttentionImplementation = attn_implementation
 
         self.to_q = nn.Linear(self.inner_dim, self.inner_dim, bias=False)
@@ -106,6 +107,8 @@ class CrossAttention(nn.Module):
     ):
         super().__init__()
 
+        self.query_dim = query_dim
+        self.context_dim = context_dim
         self.inner_dim = num_heads * head_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -209,6 +212,9 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
+    self_attention_class: type[SelfAttention] = SelfAttention
+    cross_attention_class: type[CrossAttention] = CrossAttention
+
     def __init__(
         self,
         hidden_dim: int,
@@ -219,7 +225,13 @@ class TransformerBlock(nn.Module):
     ):
         super().__init__()
 
-        self.attn1 = SelfAttention(
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.context_dim = context_dim
+        self.attn_implementation: AttentionImplementation = attn_implementation
+
+        self.attn1 = self.self_attention_class(
             num_heads=num_heads,
             head_dim=head_dim,
             dropout=0.0,
@@ -227,7 +239,7 @@ class TransformerBlock(nn.Module):
         )
         self.ff = FeedForward(hidden_dim=hidden_dim, dropout=0.0)
 
-        self.attn2 = CrossAttention(
+        self.attn2 = self.cross_attention_class(
             query_dim=hidden_dim,
             context_dim=context_dim,
             num_heads=num_heads,
@@ -273,6 +285,7 @@ class SpatialTransformer(nn.Module):
         head_dim: int,
         context_dims: list[int] = [2048],
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -288,7 +301,7 @@ class SpatialTransformer(nn.Module):
 
         self.transformer_blocks = nn.ModuleList(
             [
-                TransformerBlock(
+                transformer_block_class(
                     hidden_dim=self.inner_dim,
                     num_heads=num_heads,
                     head_dim=head_dim,
@@ -306,6 +319,7 @@ class SpatialTransformer(nn.Module):
         hidden_states: torch.Tensor,
         context: torch.Tensor | None = None,
         time_embedding: torch.Tensor | None = None,
+        transformer_args: dict | None = {},
     ) -> torch.Tensor:
         batch_size, num_channels, height, width = hidden_states.shape
 
@@ -321,11 +335,17 @@ class SpatialTransformer(nn.Module):
         )
 
         hidden_states = self.proj_in(hidden_states)
+        transformer_args = transformer_args or {}
+        transformer_args |= {
+            "height": height,
+            "width": width,
+        }
         for i, block in enumerate(self.transformer_blocks):
             hidden_states = block(
                 hidden_states,
                 context=context,
                 time_embedding=time_embedding,
+                **transformer_args,
             )
         hidden_states = self.proj_out(hidden_states)
 
@@ -603,6 +623,7 @@ class DownBlocks(nn.Module):
         num_head_channels: int = 64,
         context_dim: int = 2048,
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -670,6 +691,7 @@ class DownBlocks(nn.Module):
                             head_dim=num_head_channels,
                             context_dims=[context_dim] * num_transformers,
                             attn_implementation=attn_implementation,
+                            transformer_block_class=transformer_block_class,
                         )
                     )
 
@@ -700,6 +722,7 @@ class DownBlocks(nn.Module):
         context: torch.Tensor,
         global_embedding: torch.Tensor,
         time_embedding: torch.Tensor,
+        transformer_args: dict | None = {},
     ) -> DownBlocksOutput:
         skip_connections: list[torch.Tensor] = []
 
@@ -721,6 +744,7 @@ class DownBlocks(nn.Module):
                         hidden_states,
                         context,
                         time_embedding,
+                        transformer_args,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Downsample):
@@ -753,6 +777,7 @@ class MidBlock(nn.Module):
         num_head_channels: int = 64,
         context_dim: int = 2048,
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -776,6 +801,7 @@ class MidBlock(nn.Module):
                     head_dim=num_head_channels,
                     context_dims=[context_dim] * num_transformers,
                     attn_implementation=attn_implementation,
+                    transformer_block_class=transformer_block_class,
                 ),
             )
 
@@ -797,6 +823,7 @@ class MidBlock(nn.Module):
         context: torch.Tensor,
         global_embedding: torch.Tensor,
         time_embedding: torch.Tensor,
+        transformer_args: dict | None = {},
     ) -> torch.Tensor:
         for layer in self.blocks:
             if isinstance(layer, ResidualBlock):
@@ -812,6 +839,7 @@ class MidBlock(nn.Module):
                     hidden_states,
                     context,
                     time_embedding,
+                    transformer_args,
                     gradient_checkpointing=self.gradient_checkpointing,
                 )
             else:
@@ -839,6 +867,7 @@ class UpBlocks(nn.Module):
         num_head_channels: int = 64,
         context_dim: int = 2048,
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -895,6 +924,7 @@ class UpBlocks(nn.Module):
                             head_dim=num_head_channels,
                             context_dims=[context_dim] * num_transformers,
                             attn_implementation=attn_implementation,
+                            transformer_block_class=transformer_block_class,
                         )
                     )
 
@@ -922,6 +952,7 @@ class UpBlocks(nn.Module):
         global_embedding: torch.Tensor,
         time_embedding: torch.Tensor,
         skip_connections: list[torch.Tensor],
+        transformer_args: dict | None = {},
     ) -> torch.Tensor:
         for layer_list in self.blocks:
             if not isinstance(layer_list, nn.ModuleList):
@@ -944,6 +975,7 @@ class UpBlocks(nn.Module):
                         hidden_states,
                         context,
                         time_embedding,
+                        transformer_args,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Upsample):
@@ -962,6 +994,8 @@ class UpBlocks(nn.Module):
 
 
 class UNet(nn.Module):
+    transformer_block_class: type[TransformerBlock] = TransformerBlock
+
     def __init__(
         self,
         in_channels: int = 4,
@@ -1021,6 +1055,7 @@ class UNet(nn.Module):
             conv_resample=conv_resample,
             context_dim=context_dim,
             attn_implementation=attn_implementation,
+            transformer_block_class=self.transformer_block_class,
         )
 
         self.middle_block = MidBlock(
@@ -1032,6 +1067,7 @@ class UNet(nn.Module):
             num_head_channels=num_head_channels,
             context_dim=context_dim,
             attn_implementation=attn_implementation,
+            transformer_block_class=self.transformer_block_class,
         )
 
         # the skip connection size
@@ -1058,6 +1094,7 @@ class UNet(nn.Module):
             conv_resample=conv_resample,
             num_head_channels=num_head_channels,
             context_dim=context_dim,
+            transformer_block_class=self.transformer_block_class,
         )
 
         self.out = nn.Sequential(
