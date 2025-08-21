@@ -44,6 +44,9 @@ class ModelForTraining(ABC, nn.Module):
     def _set_is_peft(self, is_peft: bool):
         self._is_peft = is_peft
 
+    def load_peft_weights(self):
+        pass
+
     @abstractmethod
     def before_setup_model(self):
         pass

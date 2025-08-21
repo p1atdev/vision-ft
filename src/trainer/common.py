@@ -183,13 +183,10 @@ class Trainer:
                     peft_target_config.replace_to_peft_layer(
                         self.model,
                     )
-            # if (weight_path := self.peft_config.resume_weight_path) is not None:
-            #     load_peft_weight(
-            #         self.model,
-            #         load_file_with_rename_key_map(
-            #             weight_path, self.peft_config.resume_rename_key_map
-            #         ),
-            #     )
+
+                self.print("Loading PEFT weights")
+                self.model.load_peft_weights()
+
         else:
             self.model._set_is_peft(False)
 

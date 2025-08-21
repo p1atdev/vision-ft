@@ -176,3 +176,20 @@ class LoHaLinear(PeftLayer):
         )
 
         return module
+
+    def load_weights(
+        self,
+        adapter_weights: dict[str, torch.Tensor | None],
+    ) -> None:
+        device = self.hada_w1_a.device
+
+        if (weight := adapter_weights.get("hada_w1_a")) is not None:
+            self.hada_w1_a = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("hada_w1_b")) is not None:
+            self.hada_w1_b = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("hada_w2_a")) is not None:
+            self.hada_w2_a = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("hada_w2_b")) is not None:
+            self.hada_w2_b = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("alpha")) is not None:
+            self.alpha = nn.Parameter(weight.to(device))

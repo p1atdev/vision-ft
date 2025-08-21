@@ -153,9 +153,10 @@ class RoPEEmbedder(nn.Module):
         freqs = self.get_rope_freqs(position_ids).detach()
 
         # save to cache
-        self.image_freqs[height][width] = (
-            freqs[0].clone().to(torch.device("cpu"))
-        )  # only need one batch
+        if not self.training:
+            self.image_freqs[height][width] = (
+                freqs[0].clone().to(torch.device("cpu"))
+            )  # only need one batch
 
         return freqs.to(device)
 
@@ -177,9 +178,10 @@ class RoPEEmbedder(nn.Module):
         freqs = self.get_rope_freqs(position_ids).detach()
 
         # save to cache
-        self.context_freqs[length] = (
-            freqs[0].clone().to(torch.device("cpu"))
-        )  # only need one batch
+        if not self.training:
+            self.context_freqs[length] = (
+                freqs[0].clone().to(torch.device("cpu"))
+            )  # only need one batch
 
         return freqs.to(device)
 

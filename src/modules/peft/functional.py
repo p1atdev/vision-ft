@@ -187,7 +187,13 @@ def _load_peft_weight(
                 param_name: state_dict.get(f"{full_name}.{param_name}")
                 for param_name in peft_class.adapter_weight_names
             }
-            if all([value is not None for value in adapter_state_dict.values()]):
+            if all(
+                [
+                    value is not None
+                    for key, value in adapter_state_dict.items()
+                    if "bias" not in key
+                ]
+            ):
                 layer.load_weights(adapter_state_dict)
 
         elif isinstance(layer, nn.Linear):

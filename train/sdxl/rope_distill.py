@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from accelerate import init_empty_weights
+from safetensors.torch import load_file
 
 from src.models.sdxl.adapter.rope import (
     SDXLWithRoPEConfig,
@@ -13,7 +14,7 @@ from src.models.sdxl.adapter.rope import (
     while_rope_disabled,
     while_rope_enabled,
 )
-from src.models.sdxl import convert_to_comfy_key
+from src.models.sdxl import convert_to_comfy_key, convert_from_original_key
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
@@ -28,6 +29,7 @@ from src.modules.peft import (
     get_adapter_parameters,
     while_peft_disabled,
     while_peft_enabled,
+    load_peft_weight,
 )
 from src.utils.logging import wandb_image
 
@@ -55,6 +57,22 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
             self.model.vae.eval()  # type: ignore
 
         self.model._from_checkpoint()  # load!
+
+    def load_peft_weights(self):
+        if peft_config := self.config.peft:
+            if not isinstance(peft_config, list):
+                peft_config = [peft_config]
+            for peft_target_config in peft_config:
+                if (weight_path := peft_target_config.resume_weight_path) is not None:
+                    state_dict = load_file(weight_path)
+                    load_peft_weight(
+                        self.model,
+                        {
+                            convert_from_original_key(k): v
+                            for k, v in state_dict.items()
+                        },
+                    )
+                    self.print(f"Loaded PEFT weights from {weight_path}")
 
     @property
     def raw_model(self) -> SDXLWithRoPEModel:

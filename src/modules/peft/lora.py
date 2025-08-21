@@ -151,6 +151,17 @@ class LoRALinear(PeftLayer):
 
         return module
 
+    def load_weights(self, adapter_weights: dict[str, torch.Tensor | None]) -> None:
+        device = self.lora_down.weight.device
+        if (weight := adapter_weights.get("lora_down.weight")) is not None:
+            self.lora_down.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.weight")) is not None:
+            self.lora_up.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.bias")) is not None:
+            self.lora_up.bias = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("alpha")) is not None:
+            self.alpha = nn.Parameter(weight.to(device))
+
 
 # ref: https://github.com/kohya-ss/sd-scripts/blob/52c8dec9534e9dea1226bf6e8d6ad3b1483d63aa/networks/lora.py#L59
 class LoRAConv2d(PeftLayer):
@@ -285,3 +296,14 @@ class LoRAConv2d(PeftLayer):
             )
 
         return module
+
+    def load_weights(self, adapter_weights: dict[str, torch.Tensor | None]) -> None:
+        device = self.lora_down.weight.device
+        if (weight := adapter_weights.get("lora_down.weight")) is not None:
+            self.lora_down.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.weight")) is not None:
+            self.lora_up.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.bias")) is not None:
+            self.lora_up.bias = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("alpha")) is not None:
+            self.alpha = nn.Parameter(weight.to(device))
