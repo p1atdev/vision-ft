@@ -1,6 +1,7 @@
 from collections import defaultdict
 import math
 from typing import Literal
+from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
@@ -133,6 +134,7 @@ class RoPEEmbedder(nn.Module):
 
         return freqs
 
+    @torch.no_grad
     def get_image_freqs(
         self,
         batch_size: int,
@@ -142,13 +144,13 @@ class RoPEEmbedder(nn.Module):
     ) -> torch.Tensor:
         cache = self.image_freqs.get(height, {}).get(width, None)
 
-        if cache is not None:
+        if (cache is not None) and (not self.training):
             # repeat batch size
             cache = cache.unsqueeze(0).repeat(batch_size, 1, 1)
             return cache.to(device)
 
         position_ids = self.get_image_position_ids(batch_size, height, width)
-        freqs = self.get_rope_freqs(position_ids)
+        freqs = self.get_rope_freqs(position_ids).detach()
 
         # save to cache
         self.image_freqs[height][width] = (
@@ -157,6 +159,7 @@ class RoPEEmbedder(nn.Module):
 
         return freqs.to(device)
 
+    @torch.no_grad
     def get_context_freqs(
         self,
         batch_size: int,
@@ -165,13 +168,13 @@ class RoPEEmbedder(nn.Module):
     ) -> torch.Tensor:
         cache = self.context_freqs.get(length, None)
 
-        if cache is not None:
+        if (cache is not None) and (not self.training):
             # repeat batch size
             cache = cache.unsqueeze(0).repeat(batch_size, 1, 1)
             return cache.to(device)
 
         position_ids = self.get_context_position_ids(batch_size, length)
-        freqs = self.get_rope_freqs(position_ids)
+        freqs = self.get_rope_freqs(position_ids).detach()
 
         # save to cache
         self.context_freqs[length] = (
@@ -209,8 +212,6 @@ class SelfAttentionWithRoPE(SelfAttention, _WithRoPE):
         mask: torch.Tensor | None = None,
         image_freqs: torch.Tensor | None = None,
         interpolation_ratio: float | None = None,
-        # height: int | None = None,
-        # width: int | None = None,
         *args,
         **kwargs,
     ):
@@ -272,8 +273,6 @@ class CrossAttentionWithRoPE(CrossAttention, _WithRoPE):
         image_freqs: torch.Tensor | None = None,
         context_freqs: torch.Tensor | None = None,
         interpolation_ratio: float | None = None,
-        # height: int | None = None,
-        # width: int | None = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
@@ -569,3 +568,29 @@ class SDXLWithRoPEModel(SDXLModel):
     @classmethod
     def from_config(cls, config: SDXLWithRoPEConfig) -> "SDXLWithRoPEModel":
         return cls(config)
+
+
+@contextmanager
+def while_rope_enabled(model: SDXLWithRoPEModel):
+    """
+    Context manager to temporarily enable RoPE in the model.
+    """
+    original_state = model.denoiser.rope_enabled
+    model.denoiser.set_rope_enabled(True)
+    try:
+        yield
+    finally:
+        model.denoiser.set_rope_enabled(original_state)
+
+
+@contextmanager
+def while_rope_disabled(model: SDXLWithRoPEModel):
+    """
+    Context manager to temporarily disable RoPE in the model.
+    """
+    original_state = model.denoiser.rope_enabled
+    model.denoiser.set_rope_enabled(False)
+    try:
+        yield
+    finally:
+        model.denoiser.set_rope_enabled(original_state)

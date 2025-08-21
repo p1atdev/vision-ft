@@ -1,5 +1,4 @@
 from typing import NamedTuple, Literal
-import math
 
 import torch
 import torch.nn as nn
