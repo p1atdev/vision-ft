@@ -14,7 +14,6 @@ from src.models.sdxl.adapter.rope import (
     while_rope_enabled,
 )
 from src.models.sdxl import convert_to_comfy_key
-from src.models.sdxl.denoiser import while_gradient_checkpointing
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
