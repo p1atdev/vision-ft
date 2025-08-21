@@ -1,4 +1,6 @@
 from collections import defaultdict
+import math
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -50,14 +52,21 @@ def apply_rope(
     return outputs.to(inputs_dtype)
 
 
-class RoPEEmbedder:
+ORIGIN_POSITION = Literal["top_left", "center"]
+
+
+class RoPEEmbedder(nn.Module):
     def __init__(
         self,
         rope_dims: list[int],
         rope_theta: float = 10000.0,
+        origin_position: ORIGIN_POSITION = "top_left",
     ):
+        super().__init__()
+
         self.rope_dims = rope_dims
         self.rope_theta = rope_theta
+        self.origin_position: ORIGIN_POSITION = origin_position
 
         # {height: {width: freqs}}
         self.image_freqs: dict[int, dict[int, torch.Tensor]] = defaultdict(dict)
@@ -66,7 +75,13 @@ class RoPEEmbedder:
     def get_image_position_ids(
         self, batch_size: int, height: int, width: int
     ) -> torch.Tensor:
-        ids = torch.zeros(batch_size, height, width, 2, dtype=torch.int64)
+        ids = torch.zeros(
+            batch_size,
+            height,
+            width,
+            len(self.rope_dims),  # 2
+            dtype=torch.int64,
+        )
 
         # 0: Y axis
         y_ids = (
@@ -74,6 +89,9 @@ class RoPEEmbedder:
             .view(1, -1, 1)
             .repeat(batch_size, 1, width)
         )
+        if self.origin_position == "center":
+            half_height = math.ceil(height // 2)
+            y_ids = y_ids - half_height  # shift (0, 0) to center
         ids[:, :, :, 0] = y_ids
 
         # 1: X axis
@@ -82,10 +100,13 @@ class RoPEEmbedder:
             .view(1, 1, -1)
             .repeat(batch_size, height, 1)
         )
+        if self.origin_position == "center":
+            half_width = math.ceil(width // 2)
+            x_ids = x_ids - half_width  # shift (0, 0) to center
         ids[:, :, :, 1] = x_ids
 
         # flatten
-        ids = ids.view(batch_size, height * width, 2)
+        ids = ids.view(batch_size, height * width, len(self.rope_dims))
 
         return ids
 
@@ -354,6 +375,7 @@ class TransformerWithRoPE(TransformerBlock, _WithRoPE):
         attn_implementation: AttentionImplementation = "eager",
         rope_dims: list[int] = [32, 32],
         rope_theta: float = 10000.0,
+        origin_position: ORIGIN_POSITION = "top_left",
     ):
         super().__init__(
             hidden_dim=hidden_dim,
@@ -366,6 +388,7 @@ class TransformerWithRoPE(TransformerBlock, _WithRoPE):
         self.rope_embedder = RoPEEmbedder(
             rope_dims=rope_dims,
             rope_theta=rope_theta,
+            origin_position=origin_position,
         )
 
     def forward(
@@ -435,6 +458,7 @@ class DenoiserConfigWithRoPE(DenoiserConfig):
 
     rope_dims: list[int] = [32, 32]
     rope_theta: float = 10000.0
+    origin_position: ORIGIN_POSITION = "center"
 
 
 class DenoiserWithRoPE(Denoiser):
@@ -526,8 +550,21 @@ class SDXLWithRoPEModel(SDXLModel):
     denoiser: DenoiserWithRoPE
     denoiser_class: type[Denoiser] = DenoiserWithRoPE
 
+    config: SDXLWithRoPEConfig
+
     def __init__(self, config: SDXLWithRoPEConfig):
         super().__init__(config)
+
+        self.apply_rope_config()
+
+    def apply_rope_config(self):
+        for module in self.modules():
+            if isinstance(module, _WithRoPE):
+                module.set_rope_enabled(self.config.denoiser.rope_enabled)
+            elif isinstance(module, RoPEEmbedder):
+                module.rope_dims = self.config.denoiser.rope_dims
+                module.rope_theta = self.config.denoiser.rope_theta
+                module.origin_position = self.config.denoiser.origin_position
 
     @classmethod
     def from_config(cls, config: SDXLWithRoPEConfig) -> "SDXLWithRoPEModel":
