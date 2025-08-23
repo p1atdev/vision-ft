@@ -209,11 +209,18 @@ class SDXLModel(nn.Module):
     def decode_image(
         self,
         latents: torch.Tensor,
+        use_tiling: bool = False,
     ) -> list[Image.Image]:
-        image = self.vae.decode(
-            latents / self.vae.scaling_factor,  # type: ignore
-            return_dict=False,
-        )[0]
+        if use_tiling:
+            image = self.vae.tiled_decode(
+                latents / self.vae.scaling_factor,  # type: ignore
+                return_dict=False,
+            )[0]
+        else:
+            image = self.vae.decode(
+                latents / self.vae.scaling_factor,  # type: ignore
+                return_dict=False,
+            )[0]
         image = tensor_utils.tensor_to_images(image)
 
         return image
@@ -309,6 +316,7 @@ class SDXLModel(nn.Module):
         target_size = target_size or (height, width)
         target_size_tensor = torch.tensor(target_size, device=execution_device)
         crop_coords_tensor = torch.tensor(crop_coords_top_left, device=execution_device)
+        should_tile = max(height, width) >= 1536
 
         # 2. Encode text
         if do_offloading:
@@ -399,7 +407,7 @@ class SDXLModel(nn.Module):
         # 5. Decode the latents
         if do_offloading:
             self.vae.to(execution_device)  # type: ignore
-        image = self.decode_image(latents.to(self.vae.device))
+        image = self.decode_image(latents.to(self.vae.device), use_tiling=should_tile)
         if do_offloading:
             self.vae.to("cpu")  # type: ignore
             torch.cuda.empty_cache()
