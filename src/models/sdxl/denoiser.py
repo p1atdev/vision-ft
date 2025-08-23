@@ -256,6 +256,8 @@ class TransformerBlock(nn.Module):
         hidden_states: torch.Tensor,
         context: torch.Tensor,
         time_embedding: torch.Tensor,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         # 1. self attention
         hidden_states = hidden_states + self.attn1(
