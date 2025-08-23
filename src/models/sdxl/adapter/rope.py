@@ -213,7 +213,6 @@ class SelfAttentionWithRoPE(SelfAttention, _WithRoPE):
         hidden_states: torch.Tensor,
         mask: torch.Tensor | None = None,
         image_freqs: torch.Tensor | None = None,
-        interpolation_ratio: float | None = None,
         *args,
         **kwargs,
     ):
@@ -238,15 +237,8 @@ class SelfAttentionWithRoPE(SelfAttention, _WithRoPE):
         if self.rope_enabled:
             assert image_freqs is not None
 
-            rope_q = apply_rope(q, image_freqs)
-            rope_k = apply_rope(k, image_freqs)
-
-            if interpolation_ratio is not None:
-                q = q * (1 - interpolation_ratio) + rope_q * interpolation_ratio
-                k = k * (1 - interpolation_ratio) + rope_k * interpolation_ratio
-            else:
-                q = rope_q
-                k = rope_k
+            q = apply_rope(q, image_freqs)
+            k = apply_rope(k, image_freqs)
 
         attn = scaled_dot_product_attention(
             q,
@@ -274,7 +266,6 @@ class CrossAttentionWithRoPE(CrossAttention, _WithRoPE):
         mask: torch.Tensor | None = None,
         image_freqs: torch.Tensor | None = None,
         context_freqs: torch.Tensor | None = None,
-        interpolation_ratio: float | None = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
@@ -304,15 +295,8 @@ class CrossAttentionWithRoPE(CrossAttention, _WithRoPE):
         if self.rope_enabled:
             assert image_freqs is not None and context_freqs is not None
 
-            rope_q = apply_rope(q, image_freqs)
-            rope_k = apply_rope(k, context_freqs)
-
-            if interpolation_ratio is not None:
-                q = q * (1 - interpolation_ratio) + rope_q * interpolation_ratio
-                k = k * (1 - interpolation_ratio) + rope_k * interpolation_ratio
-            else:
-                q = rope_q
-                k = rope_k
+            q = apply_rope(q, image_freqs)
+            k = apply_rope(k, context_freqs)
 
         attn = scaled_dot_product_attention(
             q,
@@ -397,7 +381,6 @@ class TransformerWithRoPE(TransformerBlock, _WithRoPE):
         hidden_states: torch.Tensor,
         context: torch.Tensor,
         time_embedding: torch.Tensor,
-        interpolation_ratio: float | None = None,
         height: int | None = None,
         width: int | None = None,
         *args,
@@ -429,7 +412,6 @@ class TransformerWithRoPE(TransformerBlock, _WithRoPE):
         hidden_states = hidden_states + self.attn1(
             self.norm1(hidden_states),
             image_freqs=image_freqs,
-            interpolation_ratio=interpolation_ratio,
             *args,
             **kwargs,
         )
@@ -442,7 +424,6 @@ class TransformerWithRoPE(TransformerBlock, _WithRoPE):
             time_embedding=time_embedding,
             image_freqs=image_freqs,
             context_freqs=context_freqs,
-            interpolation_ratio=interpolation_ratio,
             *args,
             **kwargs,
         )
@@ -509,9 +490,7 @@ class DenoiserWithRoPE(Denoiser):
             context=encoder_hidden_states,
             global_embedding=global_cond,
             time_embedding=time_embed,
-            transformer_args={
-                "interpolation_ratio": None,  # TODO
-            },
+            transformer_args={},
         )
 
         # 3. middle blocks
@@ -520,9 +499,7 @@ class DenoiserWithRoPE(Denoiser):
             context=encoder_hidden_states,
             global_embedding=global_cond,
             time_embedding=time_embed,
-            transformer_args={
-                "interpolation_ratio": None,  # TODO
-            },
+            transformer_args={},
         )
 
         # 4. up blocks
@@ -532,9 +509,7 @@ class DenoiserWithRoPE(Denoiser):
             global_embedding=global_cond,
             time_embedding=time_embed,
             skip_connections=skip_connections,
-            transformer_args={
-                "interpolation_ratio": None,  # TODO
-            },
+            transformer_args={},
         )
 
         # 5. output
