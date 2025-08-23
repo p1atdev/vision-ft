@@ -571,6 +571,13 @@ class SDXLWithRoPEModel(SDXLModel):
     def from_config(cls, config: SDXLWithRoPEConfig) -> "SDXLWithRoPEModel":
         return cls(config)
 
+    @classmethod
+    def from_checkpoint(
+        cls,
+        config: SDXLWithRoPEConfig,
+    ) -> "SDXLWithRoPEModel":
+        return super().from_checkpoint(config)  # type: ignore
+
 
 @contextmanager
 def while_rope_enabled(model: SDXLWithRoPEModel):
