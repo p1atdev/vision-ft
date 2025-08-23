@@ -53,6 +53,7 @@ class ImageCaptionPair(BaseModel):
                 return format_general_character_tags(
                     general=metadata["tagger"].get("general", []),
                     character=metadata["tagger"].get("character", []),
+                    rating=metadata.get("rating", "general"),
                     separator=", ",
                     group_separator="|||",
                 )

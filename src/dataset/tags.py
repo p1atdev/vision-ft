@@ -22,6 +22,7 @@ PEOPLE_TAGS = [
 def format_general_character_tags(
     general: list[str],
     character: list[str],
+    rating: str,
     separator: str = ", ",
     group_separator: str = "|||",
 ):
@@ -33,6 +34,16 @@ def format_general_character_tags(
             people_tags.append(tag)
         else:
             general_tags.append(tag)
+
+    # Animagine-like
+    rating_tags = []
+    if rating in ["explicit", "questionable"]:
+        rating_tags.append("nsfw")
+
+        if rating in ["explicit", "e"]:
+            rating_tags.append("explicit")
+    else:
+        rating_tags.append("safe")
 
     return group_separator.join(
         [
