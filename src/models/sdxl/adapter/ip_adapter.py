@@ -1206,14 +1206,20 @@ class SDXLModelWithIPAdapter(SDXLModel):
             reference_image = self.preprocess_reference_image(reference_image).to(
                 execution_device
             )
-            positive_reference_embeddings = self.encode_reference_image(reference_image)
-            reference_embeddings = torch.cat(
+            # random noise image for negative conditioning
+            negative_image = (
+                torch.empty_like(reference_image)
+                .normal_(mean=0.0, std=1.0)
+                .clamp(-1.0, 1.0)
+            )
+            reference_images = torch.cat(
                 [
-                    positive_reference_embeddings,
-                    torch.zeros_like(positive_reference_embeddings),
+                    reference_image,
+                    negative_image,
                 ],
                 dim=0,  # batch
             )
+            reference_embeddings = self.encode_reference_image(reference_images)
             prompt_embeddings = torch.cat(
                 [prompt_embeddings, reference_embeddings],
                 dim=1,  # seq_len
