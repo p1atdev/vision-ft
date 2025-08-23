@@ -1,9 +1,11 @@
 from PIL.Image import Image
 import click
+import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms.v2.functional as TF
 
 from accelerate import init_empty_weights
 from safetensors.torch import load_file
@@ -39,6 +41,9 @@ class SDXLForRoPEDistillTrainingConfig(SDXLWithRoPEConfig):
 
     l2_loss_weight: float = 1.0
     distill_loss_weight: float = 1.0
+    lowres_loss_weight: float = 0.0
+
+    lowres_ratio: float = 4.0  # downscale ratio for low-res loss
 
 
 class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
@@ -133,6 +138,32 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
                 crop_coords_top_left=crop_coords_top_left,
             )
 
+    @torch.no_grad
+    def downscale(
+        self,
+        pixel_values: torch.Tensor,
+        original_size: torch.Tensor,
+        target_size: torch.Tensor,
+        crop_coords: torch.Tensor,
+        ratio: float = 4.0,
+    ):
+        _batch_size, _channels, height, width = pixel_values.size()
+        pixel_values = TF.resize(
+            pixel_values,
+            size=[
+                math.ceil(height / ratio),
+                math.ceil(width / ratio),
+            ],
+            interpolation=TF.InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+
+        original_size = (original_size / ratio).ceil()
+        target_size = (target_size / ratio).ceil()
+        crop_coords = (crop_coords / ratio).floor()
+
+        return pixel_values, original_size, target_size, crop_coords
+
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
         caption = batch["caption"]
@@ -202,6 +233,35 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
             crop_coords_top_left=crop_coords_top_left,
         )
 
+        # 3.3 Low-res
+        if self.model_config.lowres_loss_weight > 0:
+            (
+                lowres_pixel_values,
+                lowres_original_size,
+                lowres_target_size,
+                lowres_crop_coords,
+            ) = self.downscale(
+                pixel_values=pixel_values,
+                original_size=original_size,
+                target_size=target_size,
+                crop_coords=crop_coords_top_left,
+                ratio=self.model_config.lowres_ratio,
+            )
+            lowres_latents = self.model.encode_image(lowres_pixel_values)
+            lowres_noisy_latents, lowres_random_noise = prepare_noised_latents(
+                latents=lowres_latents,
+                timestep=timesteps,
+            )
+            lowres_student_pred = self.model(
+                latents=lowres_noisy_latents,
+                timestep=timesteps,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_pooler_output=pooled_hidden_states,
+                original_size=lowres_original_size,
+                target_size=lowres_target_size,
+                crop_coords_top_left=lowres_crop_coords,
+            )
+
         # 4. Calculate the loss
         total_loss = torch.tensor(0.0, device=self.accelerator.device)
         if self.model_config.l2_loss_weight > 0:
@@ -222,6 +282,15 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
             self.log("train/distill_loss", distill_loss, on_step=True, on_epoch=True)
             distill_loss = distill_loss * self.model_config.distill_loss_weight
             total_loss = total_loss + distill_loss
+        if self.model_config.lowres_loss_weight > 0:
+            lowres_loss = loss_with_predicted_noise(
+                latents=lowres_latents,
+                random_noise=lowres_random_noise,
+                predicted_noise=lowres_student_pred,
+            )
+            self.log("train/lowres_loss", lowres_loss, on_step=True, on_epoch=True)
+            lowres_loss = lowres_loss * self.model_config.lowres_loss_weight
+            total_loss = total_loss + lowres_loss
 
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
