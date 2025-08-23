@@ -168,33 +168,39 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
             timestep=timesteps,
         )
 
-        # 3.1 Teacher prediction
-        with (
-            torch.inference_mode(),
-            while_peft_disabled(self.model),
-            while_rope_disabled(self.model),
-        ):
-            teacher_pred = self.model(
-                latents=noisy_latents,
-                timestep=timesteps,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_pooler_output=pooled_hidden_states,
-                original_size=original_size,
-                target_size=target_size,
-                crop_coords_top_left=crop_coords_top_left,
-            )
+        # 3.1 Teacher prediction (distillation)
+        if self.model_config.distill_loss_weight > 0:
+            with (
+                torch.inference_mode(),
+                while_peft_disabled(self.model),
+                while_rope_disabled(self.model),
+            ):
+                assert not self.model.denoiser.rope_enabled, (
+                    "RoPE must be disabled for teacher model"
+                )
+                teacher_pred = self.model(
+                    latents=noisy_latents,
+                    timestep=timesteps,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_pooler_output=pooled_hidden_states,
+                    original_size=original_size,
+                    target_size=target_size,
+                    crop_coords_top_left=crop_coords_top_left,
+                )
 
         # 3.2 Student prediction
-        with while_rope_enabled(self.model):
-            student_pred = self.model(
-                latents=noisy_latents,
-                timestep=timesteps,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_pooler_output=pooled_hidden_states,
-                original_size=original_size,
-                target_size=target_size,
-                crop_coords_top_left=crop_coords_top_left,
-            )
+        assert self.model.denoiser.rope_enabled, (
+            "RoPE must be enabled for student model"
+        )
+        student_pred = self.model(
+            latents=noisy_latents,
+            timestep=timesteps,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_pooler_output=pooled_hidden_states,
+            original_size=original_size,
+            target_size=target_size,
+            crop_coords_top_left=crop_coords_top_left,
+        )
 
         # 4. Calculate the loss
         total_loss = torch.tensor(0.0, device=self.accelerator.device)
@@ -204,18 +210,18 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
                 random_noise=random_noise,
                 predicted_noise=student_pred,
             )
+            self.log("train/l2_loss", l2_loss, on_step=True, on_epoch=True)
             l2_loss = l2_loss * self.model_config.l2_loss_weight
             total_loss = total_loss + l2_loss
-            self.log("train/l2_loss", l2_loss, on_step=True, on_epoch=True)
         if self.model_config.distill_loss_weight > 0:
             distill_loss = F.mse_loss(
                 input=student_pred,
                 target=teacher_pred.detach(),
                 reduction="mean",
             )
+            self.log("train/distill_loss", distill_loss, on_step=True, on_epoch=True)
             distill_loss = distill_loss * self.model_config.distill_loss_weight
             total_loss = total_loss + distill_loss
-            self.log("train/distill_loss", distill_loss, on_step=True, on_epoch=True)
 
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
