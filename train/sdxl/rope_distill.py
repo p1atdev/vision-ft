@@ -41,9 +41,11 @@ class SDXLForRoPEDistillTrainingConfig(SDXLWithRoPEConfig):
 
     l2_loss_weight: float = 1.0
     distill_loss_weight: float = 1.0
-    lowres_loss_weight: float = 0.0
 
-    lowres_ratio: float = 4.0  # downscale ratio for low-res loss
+    lowres_l2_loss_weight: float = 0.0
+    lowres_distill_loss_weight: float = 1.0
+
+    lowres_ratio: float = 2.0  # downscale ratio for low-res loss
 
 
 class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
@@ -234,7 +236,10 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
         )
 
         # 3.3 Low-res
-        if self.model_config.lowres_loss_weight > 0:
+        if (
+            self.model_config.lowres_l2_loss_weight > 0
+            or self.model_config.lowres_distill_loss_weight > 0
+        ):
             (
                 lowres_pixel_values,
                 lowres_original_size,
@@ -262,6 +267,26 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
                 crop_coords_top_left=lowres_crop_coords,
             )
 
+            if self.model_config.lowres_distill_loss_weight > 0:
+                # teacher prediction (distillation)
+                with (
+                    torch.inference_mode(),
+                    while_peft_disabled(self.model),
+                    while_rope_disabled(self.model),
+                ):
+                    assert not self.model.denoiser.rope_enabled, (
+                        "RoPE must be disabled for teacher model"
+                    )
+                    lowres_teacher_pred = self.model(
+                        latents=lowres_noisy_latents,
+                        timestep=timesteps,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_pooler_output=pooled_hidden_states,
+                        original_size=lowres_original_size,
+                        target_size=lowres_target_size,
+                        crop_coords_top_left=lowres_crop_coords,
+                    )
+
         # 4. Calculate the loss
         total_loss = torch.tensor(0.0, device=self.accelerator.device)
         if self.model_config.l2_loss_weight > 0:
@@ -282,15 +307,35 @@ class SDXLForTextToImageTraining(ModelForTraining, nn.Module):
             self.log("train/distill_loss", distill_loss, on_step=True, on_epoch=True)
             distill_loss = distill_loss * self.model_config.distill_loss_weight
             total_loss = total_loss + distill_loss
-        if self.model_config.lowres_loss_weight > 0:
-            lowres_loss = loss_with_predicted_noise(
+
+        if self.model_config.lowres_l2_loss_weight > 0:
+            lowres_l2_loss = loss_with_predicted_noise(
                 latents=lowres_latents,
                 random_noise=lowres_random_noise,
                 predicted_noise=lowres_student_pred,
             )
-            self.log("train/lowres_loss", lowres_loss, on_step=True, on_epoch=True)
-            lowres_loss = lowres_loss * self.model_config.lowres_loss_weight
-            total_loss = total_loss + lowres_loss
+            self.log(
+                "train/lowres_l2_loss", lowres_l2_loss, on_step=True, on_epoch=True
+            )
+            lowres_l2_loss = lowres_l2_loss * self.model_config.lowres_l2_loss_weight
+            total_loss = total_loss + lowres_l2_loss
+
+        if self.model_config.lowres_distill_loss_weight > 0:
+            lowres_distill_loss = F.mse_loss(
+                input=lowres_student_pred,
+                target=lowres_teacher_pred.detach(),
+                reduction="mean",
+            )
+            self.log(
+                "train/lowres_distill_loss",
+                lowres_distill_loss,
+                on_step=True,
+                on_epoch=True,
+            )
+            lowres_distill_loss = (
+                lowres_distill_loss * self.model_config.lowres_distill_loss_weight
+            )
+            total_loss = total_loss + lowres_distill_loss
 
         self.log("train/loss", total_loss, on_step=True, on_epoch=True)
 
