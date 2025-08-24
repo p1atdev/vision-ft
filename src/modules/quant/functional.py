@@ -4,7 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import optimum.quanto as quanto
+try:
+    import optimum.quanto as quanto
+except ImportError:
+    quanto = {}
+
 from bitsandbytes.functional import quantize_4bit
 
 from ...utils.state_dict import get_target_keys

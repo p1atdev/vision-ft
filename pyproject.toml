@@ -22,7 +22,6 @@ dependencies = [
     "sentencepiece>=0.2.0",
     "accelerate>=1.2.1",
     "torchao>=0.7.0",
-    "optimum-quanto>=0.2.6",
     "imagesize>=1.4.1",
     "cheesechaser>=0.2.2",
     "polars>=1.23.0",
@@ -63,6 +62,7 @@ requires-dist = ["setuptools", "wheel"]
 build = ["setuptools", "wheel"]
 compile = ["schedulefree", "diffusers"]
 flash-attn = ["flash-attn"]
+quanto = ["optimum-quanto"]             # to avoid Zero GPU issues
 triton = ["triton"]
 xformers = ["xformers"]
 
