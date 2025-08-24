@@ -59,7 +59,11 @@ class AdapterManager(nn.Module, ABC):
 
         # load state dict
         # rename
-        state_dict = {k.replace(".", "!"): v for k, v in state_dict.items()}
+        state_dict = {
+            # replace the last '.' with '!' except last one
+            k.replace(".", "!", k.count(".") - 1): v
+            for k, v in state_dict.items()
+        }
         self.module_dict.load_state_dict(state_dict, assign=True)
 
     def parameters(self):
