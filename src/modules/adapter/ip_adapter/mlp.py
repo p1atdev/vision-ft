@@ -76,7 +76,7 @@ class MLPImageProjector(nn.Module):
 
         return projector
 
-    def forward(self, features: torch.Tensor):
+    def forward(self, features: torch.Tensor, *args, **kwargs):
         ip_tokens = self.mlp(features)
         ip_tokens = ip_tokens.reshape(
             -1,

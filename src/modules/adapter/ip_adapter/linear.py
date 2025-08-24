@@ -71,7 +71,7 @@ class LinearImageProjector(nn.Module):
 
         return projector
 
-    def forward(self, features: torch.Tensor):
+    def forward(self, features: torch.Tensor, *args, **kwargs):
         ip_tokens = self.proj(features).reshape(
             -1,
             self.num_ip_tokens,

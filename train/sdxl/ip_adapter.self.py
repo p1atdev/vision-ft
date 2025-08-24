@@ -167,7 +167,8 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
 
         # ip adapter inputs
         ip_tokens: torch.Tensor = self.model.encode_reference_image(
-            reference_pixel_values
+            reference_pixel_values,
+            encoder_hidden_states,  # for image-text projector
         )
         # drop ip tokens randomly for cfg
         ip_tokens[drop_image] = 0

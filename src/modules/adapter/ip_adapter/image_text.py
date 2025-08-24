@@ -25,7 +25,7 @@ class ImageTextAttention(nn.Module):
     def __init__(
         self,
         image_dim: int,
-        context_dim: int,
+        text_dim: int,
         num_heads: int,
         attention_backend: AttentionImplementation = "sdpa",
     ):
@@ -37,28 +37,28 @@ class ImageTextAttention(nn.Module):
         self.attention_backend: AttentionImplementation = attention_backend
 
         self.norm_image = nn.RMSNorm(image_dim)
-        self.norm_text = nn.RMSNorm(context_dim)
+        self.norm_text = nn.RMSNorm(text_dim)
 
         # QKNorm
         self.norm_q = nn.RMSNorm(self.head_dim)
         self.norm_k = nn.RMSNorm(self.head_dim)
 
         self.to_q = nn.Linear(image_dim, image_dim, bias=False)
-        self.to_k = nn.Linear(context_dim, image_dim, bias=False)
-        self.to_v = nn.Linear(context_dim, image_dim, bias=False)
+        self.to_k = nn.Linear(text_dim, image_dim, bias=False)
+        self.to_v = nn.Linear(text_dim, image_dim, bias=False)
         self.to_out = nn.Linear(image_dim, image_dim, bias=False)
 
     def forward(
         self,
         image_features: torch.Tensor,
-        context_features: torch.Tensor,
+        text_features: torch.Tensor,
     ):
         image_features = self.norm_image(image_features)
-        context_features = self.norm_text(context_features)
+        text_features = self.norm_text(text_features)
 
         query = self.to_q(image_features)
-        key = self.to_k(context_features)
-        value = self.to_v(context_features)
+        key = self.to_k(text_features)
+        value = self.to_v(text_features)
 
         query = pre_attn_reshape(query, self.num_heads)
         key = pre_attn_reshape(key, self.num_heads)
@@ -146,7 +146,7 @@ class ImageTextTransformer(nn.Module):
     def __init__(
         self,
         hidden_dim: int,
-        context_dim: int,
+        text_dim: int,
         num_heads: int,
         mlp_ratio: float = 4.0,
         attention_backend: AttentionImplementation = "sdpa",
@@ -154,14 +154,14 @@ class ImageTextTransformer(nn.Module):
         super().__init__()
 
         self.hidden_dim = hidden_dim
-        self.context_dim = context_dim
+        self.text_dim = text_dim
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads
         self.attention_backend: AttentionImplementation = attention_backend
 
         self.attn1 = ImageTextAttention(
             image_dim=hidden_dim,
-            context_dim=context_dim,
+            text_dim=text_dim,
             num_heads=num_heads,
             attention_backend=attention_backend,
         )
@@ -197,7 +197,7 @@ class ImageTextTransformer(nn.Module):
         ip_features: torch.Tensor,
     ):
         attn_output = self.attn2(image_features, ip_features)
-        return self.norm2(attn_output + image_features)
+        return self.norm2(attn_output + ip_features)
 
     def forward(
         self,
@@ -251,7 +251,7 @@ class ImageTextProjector(nn.Module):
             [
                 ImageTextTransformer(
                     hidden_dim=hidden_dim,
-                    context_dim=text_dim,
+                    text_dim=text_dim,
                     num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
                     attention_backend=attention_backend,

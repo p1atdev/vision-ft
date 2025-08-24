@@ -161,8 +161,8 @@ class IPAdapterManager(AdapterManager):
             return ImageTextProjector(
                 image_dim=self.adapter_config.feature_dim,
                 text_dim=self.adapter_config.projector_args.get(
-                    "text_dim", 2816
-                ),  # SDXL's global_cond_dim
+                    "text_dim", 2048
+                ),  # SDXL's context_dim
                 hidden_dim=attention_dim,
                 num_heads=self.adapter_config.projector_args.get("num_heads", 8),
                 num_blocks=self.adapter_config.projector_args.get("depth", 4),

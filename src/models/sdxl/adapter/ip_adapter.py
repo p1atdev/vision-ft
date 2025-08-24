@@ -1137,9 +1137,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
     def encode_reference_image(
         self,
         pixel_values: torch.Tensor,
+        prompt_embeddings: torch.Tensor,
     ):
         encoded = self.encoder(pixel_values)
-        projection = self.image_proj(encoded)
+        projection = self.image_proj(encoded, prompt_embeddings)
 
         return projection
 
@@ -1257,7 +1258,8 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 dim=0,  # batch
             )
             reference_embeddings: torch.Tensor = self.encode_reference_image(
-                reference_images
+                reference_images,
+                prompt_embeddings,
             )
             reference_embeddings = reference_embeddings.repeat_interleave(
                 repeats=num_prompts,

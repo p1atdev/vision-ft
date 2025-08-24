@@ -256,7 +256,7 @@ class ResamplerProjector(nn.Module):
 
         return module(*args)
 
-    def forward(self, image_features: torch.Tensor):
+    def forward(self, image_features: torch.Tensor, *args, **kwargs):
         batch_size, _seq_len, _dim = image_features.size()
 
         latents = self.latents.repeat(batch_size, 1, 1)
