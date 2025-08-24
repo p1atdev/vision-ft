@@ -1090,7 +1090,11 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 {k: v for k, v in state_dict.items() if k.startswith("ip_adapter.")},
             )
             self.image_proj.load_state_dict(
-                {k: v for k, v in state_dict.items() if k.startswith("image_proj.")},
+                {
+                    k[len("image_pro") :]: v
+                    for k, v in state_dict.items()
+                    if k.startswith("image_proj.")
+                },
                 assign=True,
             )
         else:
