@@ -67,6 +67,37 @@ class LinearImageProjector(nn.Module):
         if hasattr(self.norm, "bias") and self.norm.bias is not None:
             nn.init.zeros_(self.norm.bias)
 
+    @classmethod
+    def config_from_pretrained(
+        cls,
+        state_dict: dict[str, torch.Tensor],
+    ) -> dict:
+        in_features = state_dict["proj.weight"].size(1)
+        cross_attention_dim = state_dict["norm.weight"].size(0)
+        num_ip_tokens = state_dict["proj.weight"].size(0) // cross_attention_dim
+        norm_type = "layer"
+        if "norm.bias" not in state_dict:
+            norm_type = "rms"
+
+        return dict(
+            in_features=in_features,
+            cross_attention_dim=cross_attention_dim,
+            num_ip_tokens=num_ip_tokens,
+            normalization=norm_type,
+        )
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        state_dict: dict[str, torch.Tensor],
+    ) -> "LinearImageProjector":
+        config = cls.config_from_pretrained(state_dict)
+
+        projector = cls(**config)
+        projector.load_state_dict(state_dict)
+
+        return projector
+
     def forward(self, features: torch.Tensor):
         ip_tokens = self.proj(features).reshape(
             -1,
@@ -118,6 +149,37 @@ class MLPImageProjector(nn.Module):
             nn.init.ones_(self.norm.weight)
         if hasattr(self.norm, "bias") and self.norm.bias is not None:
             nn.init.zeros_(self.norm.bias)
+
+    @classmethod
+    def config_from_pretrained(
+        cls,
+        state_dict: dict[str, torch.Tensor],
+    ) -> dict:
+        in_features = state_dict["mlp.0.weight"].size(1)
+        cross_attention_dim = state_dict["norm.weight"].size(0)
+        num_style_tokens = state_dict["mlp.2.weight"].size(0) // cross_attention_dim
+        norm_type = "layer"
+        if "norm.bias" not in state_dict:
+            norm_type = "rms"
+
+        return dict(
+            in_features=in_features,
+            cross_attention_dim=cross_attention_dim,
+            num_style_tokens=num_style_tokens,
+            normalization=norm_type,
+        )
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        state_dict: dict[str, torch.Tensor],
+    ) -> "MLPImageProjector":
+        config = cls.config_from_pretrained(state_dict)
+
+        projector = cls(**config)
+        projector.load_state_dict(state_dict)
+
+        return projector
 
     def forward(self, features: torch.Tensor):
         ip_tokens = self.mlp(features)
@@ -322,6 +384,59 @@ class ResamplerProjector(nn.Module):
         if hasattr(self.norm_out, "bias") and self.norm_out.bias is not None:
             nn.init.zeros_(self.norm_out.bias)
 
+    @classmethod
+    def config_from_pretrained(
+        cls,
+        state_dict: dict[str, torch.Tensor],
+        num_heads: int,
+    ) -> dict:
+        in_features = state_dict["proj_in.weight"].size(1)
+        cross_attention_dim = state_dict["proj_out.weight"].size(0)
+
+        layer_indices = [
+            key.split(".")[1]  # layers.<0>.0.
+            for key in state_dict.keys()
+            if key.startswith("layers.")
+        ]
+        assert len(layer_indices) > 0, "No layers found in state_dict"
+
+        depth = len(set(layer_indices))
+
+        mlp_ratio = state_dict["layers.0.1.1.weight"].size(0) / cross_attention_dim
+        num_ip_tokens = state_dict["latents"].size(1)
+
+        norm_type = "layer"
+        if "norm_out.bias" not in state_dict:
+            norm_type = "rms"
+
+        qk_norm = False
+        if "layers.0.0.norm_q.weight" in state_dict:
+            qk_norm = True
+
+        return {
+            "in_features": in_features,
+            "num_heads": num_heads,
+            "mlp_ratio": mlp_ratio,
+            "cross_attention_dim": cross_attention_dim,
+            "num_ip_tokens": num_ip_tokens,
+            "depth": depth,
+            "normalization": norm_type,
+            "qk_norm": qk_norm,
+        }
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        state_dict: dict[str, torch.Tensor],
+        num_heads: int,
+    ) -> "ResamplerProjector":
+        config = cls.config_from_pretrained(state_dict, num_heads)
+
+        projector = cls(**config)
+        projector.load_state_dict(state_dict)
+
+        return projector
+
     def _forward_layer(self, module: nn.Module, *args):
         # is training?
         if self.training and self.gradient_checkpointing:
@@ -518,3 +633,35 @@ class IPAdapterManager(AdapterManager):
             # this is must be IPAdapterCrossAttention
             assert hasattr(module, "init_weights"), "module must have init_weights()"
             module.init_weights()
+
+
+PROJECTOR_TYPE = Literal["linear", "mlp", "resampler"]
+
+
+def detect_projector_type(
+    state_dict: dict[str, torch.Tensor],
+) -> PROJECTOR_TYPE:
+    if "proj.weight" in state_dict:
+        return "linear"
+    elif "mlp.0.weight" in state_dict:
+        return "mlp"
+    elif "latents" in state_dict and "proj_in.weight" in state_dict:
+        return "resampler"
+    else:
+        raise ValueError("Unknown projector type in state_dict")
+
+
+def load_projector_from_state_dict(
+    state_dict: dict[str, torch.Tensor],
+    **kwargs,
+) -> nn.Module:
+    projector_type = detect_projector_type(state_dict)
+
+    if projector_type == "linear":
+        return LinearImageProjector.from_pretrained(state_dict)
+    elif projector_type == "mlp":
+        return MLPImageProjector.from_pretrained(state_dict)
+    elif projector_type == "resampler":
+        return ResamplerProjector.from_pretrained(state_dict, **kwargs)
+    else:
+        raise ValueError(f"Unknown projector type: {projector_type}")
