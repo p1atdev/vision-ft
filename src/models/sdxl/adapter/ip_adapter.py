@@ -1097,6 +1097,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 },
                 assign=True,
             )
+            self.encoder._load_model()
         else:
             # initialize
             # init adapter weights, i.e. copy original weights and initialize ip weights
