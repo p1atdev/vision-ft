@@ -1143,6 +1143,34 @@ class SDXLModelWithIPAdapter(SDXLModel):
 
         return projection
 
+    def validate_batch_inputs(
+        self,
+        prompts: str | list[str],
+        negative_prompts: str | list[str] | None,
+    ) -> tuple[list[str], list[str] | None]:
+        if isinstance(prompts, str):
+            prompts = [prompts]
+
+        if negative_prompts is not None and isinstance(negative_prompts, str):
+            negative_prompts = [negative_prompts]
+
+        if negative_prompts is not None:
+            max_len = max(len(prompts), len(negative_prompts))
+
+            if len(prompts) != max_len:
+                assert len(prompts) == 1, (
+                    "If `prompts` has only one element, it will be broadcasted to match the length of `negative_prompts`."
+                )
+                prompts = prompts * max_len
+
+            if len(negative_prompts) != max_len:
+                assert len(negative_prompts) == 1, (
+                    "If `negative_prompts` has only one element, it will be broadcasted to match the length of `prompts`."
+                )
+                negative_prompts = negative_prompts * max_len
+
+        return prompts, negative_prompts
+
     # MARK: generate
     def generate(
         self,
@@ -1171,7 +1199,12 @@ class SDXLModelWithIPAdapter(SDXLModel):
             num_inference_steps=num_inference_steps,
             device=execution_device,
         )
-        batch_size = len(prompt) if isinstance(prompt, list) else 1
+        positive_prompts, negative_prompts = self.validate_batch_inputs(
+            prompts=prompt,
+            negative_prompts=negative_prompt,
+        )
+        num_prompts = len(positive_prompts)
+
         original_size = original_size or (height, width)
         original_size_tensor = torch.tensor(original_size, device=execution_device)
         target_size = target_size or (height, width)
@@ -1182,8 +1215,8 @@ class SDXLModelWithIPAdapter(SDXLModel):
         if do_offloading:
             self.text_encoder.to(execution_device)
         encoder_output = self.text_encoder.encode_prompts(
-            prompt,
-            negative_prompt,
+            positive_prompts,
+            negative_prompts,
             use_negative_prompts=do_cfg,
             max_token_length=max_token_length,
         )
@@ -1198,11 +1231,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 device=execution_device,
             )
         )
-        original_size_tensor = original_size_tensor.expand(
-            prompt_embeddings.size(0), -1
-        )
-        target_size_tensor = target_size_tensor.expand(prompt_embeddings.size(0), -1)
-        crop_coords_tensor = crop_coords_tensor.expand(prompt_embeddings.size(0), -1)
+        batch_size = prompt_embeddings.size(0)
+        original_size_tensor = original_size_tensor.expand(batch_size, -1)
+        target_size_tensor = target_size_tensor.expand(batch_size, -1)
+        crop_coords_tensor = crop_coords_tensor.expand(batch_size, -1)
 
         # 2.5 encode reference image if needed
         if reference_image is not None:
@@ -1224,7 +1256,14 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 ],
                 dim=0,  # batch
             )
-            reference_embeddings = self.encode_reference_image(reference_images)
+            reference_embeddings: torch.Tensor = self.encode_reference_image(
+                reference_images
+            )
+            reference_embeddings = reference_embeddings.repeat_interleave(
+                repeats=num_prompts,
+                dim=0,  # batch
+            )
+
             prompt_embeddings = torch.cat(
                 [prompt_embeddings, reference_embeddings],
                 dim=1,  # seq_len
@@ -1234,9 +1273,9 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 torch.cuda.empty_cache()
         else:
             # create zero embeddings
-            num_prompts, _seq_len, dim = prompt_embeddings.size()
+            _, _seq_len, dim = prompt_embeddings.size()
             reference_embeddings = torch.zeros(
-                (num_prompts, self.manager.adapter_config.num_ip_tokens, dim),
+                (batch_size, self.manager.adapter_config.num_ip_tokens, dim),
                 device=execution_device,
             )
             prompt_embeddings = torch.cat(
@@ -1248,7 +1287,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
         if do_offloading:
             self.denoiser.to(execution_device)
         latents = self.prepare_latents(
-            batch_size,
+            num_prompts,
             height,
             width,
             execution_dtype,
@@ -1269,7 +1308,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
                     latent_model_input, current_sigma
                 )
 
-                batch_timestep = current_timestep.expand(latent_model_input.size(0)).to(
+                batch_timestep = current_timestep.expand(batch_size).to(
                     execution_device
                 )
 
