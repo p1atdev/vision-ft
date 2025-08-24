@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 
 try:
-    import optimum.quanto as quanto
+    from optimum.quanto.nn import QLinear
 except ImportError:
-    quanto = None
+    QLinear = nn.Linear
 
 
 # just wrap the original QLinear class
-class QuantoLinear(quanto.nn.QLinear):
+class QuantoLinear(QLinear):
     pass
