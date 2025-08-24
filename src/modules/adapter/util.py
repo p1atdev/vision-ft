@@ -55,7 +55,7 @@ class AdapterManager(nn.Module, ABC):
 
     def load_adapter(self, model: nn.Module, state_dict: dict[str, torch.Tensor]):
         with init_empty_weights():
-            self.model.apply_adapter(model)
+            self.apply_adapter(model)
 
         # load state dict
         # rename
