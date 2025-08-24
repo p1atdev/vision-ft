@@ -57,8 +57,9 @@ class ImageTextAttention(nn.Module):
         text_features = self.norm_text(text_features)
 
         query = self.to_q(image_features)
-        key = self.to_k(text_features)
-        value = self.to_v(text_features)
+        kv_input = torch.cat([image_features, text_features], dim=1)
+        key = self.to_k(kv_input)
+        value = self.to_v(kv_input)
 
         query = pre_attn_reshape(query, self.num_heads)
         key = pre_attn_reshape(key, self.num_heads)
