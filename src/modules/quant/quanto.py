@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 
-import optimum.quanto as quanto
+try:
+    import optimum.quanto as quanto
+except ImportError:
+    quanto = None
 
 
 # just wrap the original QLinear class
