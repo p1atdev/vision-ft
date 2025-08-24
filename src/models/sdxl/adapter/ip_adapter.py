@@ -1086,7 +1086,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
         if checkpoint_path := self.config.adapter.checkpoint_weight:
             state_dict = load_file(checkpoint_path)
             self.manager.load_adapter(
-                self.model,
+                self,
                 {k: v for k, v in state_dict.items() if k.startswith("ip_adapter.")},
             )
             self.image_proj.load_state_dict(
