@@ -25,7 +25,6 @@ dependencies = [
     "optimum-quanto>=0.2.6",
     "imagesize>=1.4.1",
     "cheesechaser>=0.2.2",
-    "huggingface-dl>=0.0.2",
     "polars>=1.23.0",
     "huggingface-hub[hf-xet]>=0.29.1",
     "einops>=0.8.1",
