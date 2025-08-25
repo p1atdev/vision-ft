@@ -1105,6 +1105,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
             self.encoder._load_model()
             self.image_proj.to_empty(device=torch.device("cpu"))
             self.image_proj.init_weights()  # image projector
+            self.image_proj.to(dtype=str_to_dtype(self.config.adapter.dtype))
 
     @classmethod
     def from_checkpoint(
