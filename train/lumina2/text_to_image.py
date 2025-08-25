@@ -108,7 +108,16 @@ class Lumina2ForTextToImageTraining(ModelForTraining, nn.Module):
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(
             latents=latents,
-            timestep=timestep,
+            timestep=(1 - timestep),  # invert!!
+            # prepare_noised_latents() calculates as:
+            # time = 0 -> clean latents
+            # time = 1 -> noise
+            # -> noisy_latents := latents * (1 - time) + noise * time
+            # but lumina2 is:
+            # time = 0 -> noise
+            # time = 1 -> clean latents
+            # -> noisy_latents := latents * time + noise * (1 - time)
+            # so we need to invert the timestep here.
         )
 
         # 3. Predict the noise
