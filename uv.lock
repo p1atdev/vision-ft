@@ -4321,7 +4321,6 @@ dependencies = [
     { name = "imagesize" },
     { name = "lightning" },
     { name = "opencv-python" },
-    { name = "optimum-quanto" },
     { name = "polars" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -4353,6 +4352,9 @@ compile = [
 ]
 flash-attn = [
     { name = "flash-attn" },
+]
+quanto = [
+    { name = "optimum-quanto" },
 ]
 triton = [
     { name = "triton" },
@@ -4393,7 +4395,7 @@ requires-dist = [
     { name = "imagesize", specifier = ">=1.4.1" },
     { name = "lightning", specifier = ">=2.5.0.post0" },
     { name = "opencv-python", specifier = ">=4.12.0.88" },
-    { name = "optimum-quanto", specifier = ">=0.2.6" },
+    { name = "optimum-quanto", marker = "extra == 'quanto'" },
     { name = "polars", specifier = ">=1.23.0" },
     { name = "pydantic", specifier = ">=2.10.4" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -4416,7 +4418,7 @@ requires-dist = [
     { name = "wheel", marker = "extra == 'build'" },
     { name = "xformers", marker = "extra == 'xformers'" },
 ]
-provides-extras = ["build", "compile", "flash-attn", "triton", "xformers"]
+provides-extras = ["build", "compile", "flash-attn", "quanto", "triton", "xformers"]
 
 [package.metadata.requires-dev]
 dev = [
