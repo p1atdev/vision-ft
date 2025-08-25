@@ -61,7 +61,7 @@ requires-dist = ["setuptools", "wheel"]
 [project.optional-dependencies]
 build = ["setuptools", "wheel"]
 compile = ["schedulefree", "diffusers"]
-flash-attn = ["flash-attn"]
+flash-attn = ["flash-attn<2.8.0"]
 quanto = ["optimum-quanto"]             # to avoid Zero GPU issues
 triton = ["triton"]
 xformers = ["xformers"]
