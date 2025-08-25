@@ -56,9 +56,71 @@ class ImageTextAttention(nn.Module):
         image_features = self.norm_image(image_features)
         text_features = self.norm_text(text_features)
 
+        # too heavy?
         query = self.to_q(image_features)
         key = self.to_k(text_features)
         value = self.to_v(text_features)
+
+        query = pre_attn_reshape(query, self.num_heads)
+        key = pre_attn_reshape(key, self.num_heads)
+        value = pre_attn_reshape(value, self.num_heads)
+
+        # QKNorm
+        query = self.norm_q(query)
+        key = self.norm_k(key)
+
+        attn = scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            backend=self.attention_backend,
+        )
+        attn = post_attn_reshape(attn)
+
+        attn = self.to_out(attn)
+
+        return attn
+
+
+# Q: ip_tokens, KV: text+ip_tokens (flamingo perceiver)
+class TextIPAttention(nn.Module):
+    def __init__(
+        self,
+        text_dim: int,
+        num_heads: int,
+        attention_backend: AttentionImplementation = "sdpa",
+    ):
+        super().__init__()
+
+        self.text_dim = text_dim
+        self.num_heads = num_heads
+        self.head_dim = text_dim // num_heads
+        self.attention_backend: AttentionImplementation = attention_backend
+
+        self.norm_text = nn.RMSNorm(text_dim)
+        self.norm_ip = nn.RMSNorm(text_dim)  # query latent
+
+        # QKNorm
+        self.norm_q = nn.RMSNorm(self.head_dim)
+        self.norm_k = nn.RMSNorm(self.head_dim)
+
+        self.to_q = nn.Linear(text_dim, text_dim, bias=False)
+        self.to_k = nn.Linear(text_dim, text_dim, bias=False)
+        self.to_v = nn.Linear(text_dim, text_dim, bias=False)
+        self.to_out = nn.Linear(text_dim, text_dim, bias=False)
+
+    def forward(
+        self,
+        text_features: torch.Tensor,
+        ip_features: torch.Tensor,
+    ):
+        text_features = self.norm_text(text_features)
+        ip_features = self.norm_ip(ip_features)
+
+        query = self.to_q(ip_features)
+        kv_input = torch.cat([ip_features, text_features], dim=1)
+        key = self.to_k(kv_input)
+        value = self.to_v(kv_input)
 
         query = pre_attn_reshape(query, self.num_heads)
         key = pre_attn_reshape(key, self.num_heads)
@@ -96,7 +158,7 @@ class ImageIPAttention(nn.Module):
         self.head_dim = image_dim // num_heads
         self.attention_backend: AttentionImplementation = attention_backend
 
-        self.norm_text = nn.RMSNorm(image_dim)
+        self.norm_image = nn.RMSNorm(image_dim)
         self.norm_ip = nn.RMSNorm(image_dim)  # query latent
 
         # QKNorm
@@ -113,7 +175,7 @@ class ImageIPAttention(nn.Module):
         image_features: torch.Tensor,
         ip_features: torch.Tensor,
     ):
-        image_features = self.norm_text(image_features)
+        image_features = self.norm_image(image_features)
         ip_features = self.norm_ip(ip_features)
 
         query = self.to_q(ip_features)
@@ -159,16 +221,15 @@ class ImageTextTransformer(nn.Module):
         self.head_dim = hidden_dim // num_heads
         self.attention_backend: AttentionImplementation = attention_backend
 
-        self.attn1 = ImageTextAttention(
+        self.attn1 = ImageIPAttention(
             image_dim=hidden_dim,
-            text_dim=text_dim,
             num_heads=num_heads,
             attention_backend=attention_backend,
         )
         self.norm1 = nn.RMSNorm(hidden_dim)
 
-        self.attn2 = ImageIPAttention(
-            image_dim=hidden_dim,
+        self.attn2 = TextIPAttention(
+            text_dim=hidden_dim,
             num_heads=num_heads,
             attention_backend=attention_backend,
         )
@@ -183,14 +244,6 @@ class ImageTextTransformer(nn.Module):
         )
         self.norm_out = nn.RMSNorm(hidden_dim)
 
-    def image_text_attention(
-        self,
-        image_features: torch.Tensor,
-        text_features: torch.Tensor,
-    ):
-        attn_output = self.attn1(image_features, text_features)
-        return self.norm1(attn_output + image_features)
-
     def image_ip_attention(
         self,
         image_features: torch.Tensor,
@@ -199,17 +252,25 @@ class ImageTextTransformer(nn.Module):
         attn_output = self.attn2(image_features, ip_features)
         return self.norm2(attn_output + ip_features)
 
+    def text_ip_attention(
+        self,
+        image_features: torch.Tensor,
+        ip_features: torch.Tensor,
+    ):
+        attn_output = self.attn1(image_features, ip_features)
+        return self.norm1(attn_output + ip_features)
+
     def forward(
         self,
         image_features: torch.Tensor,
         text_features: torch.Tensor,
         ip_features: torch.Tensor,
     ):
-        # image-text attention
-        image_features = self.image_text_attention(image_features, text_features)
+        # image-ip attention
+        ip_features = self.image_ip_attention(image_features, ip_features)
 
         # text-ip attention
-        ip_features = self.image_ip_attention(image_features, ip_features)
+        ip_features = self.text_ip_attention(text_features, ip_features)
 
         # MLP
         ip_features = self.norm_out(ip_features + self.mlp(ip_features))
@@ -222,7 +283,7 @@ class ImageTextProjector(nn.Module):
         self,
         image_dim: int,
         text_dim: int,
-        hidden_dim: int,
+        hidden_dim: int,  # same as text_dim
         num_heads: int,
         num_blocks: int = 6,
         mlp_ratio: float = 4.0,
@@ -245,7 +306,8 @@ class ImageTextProjector(nn.Module):
         self.ip_tokens = nn.Parameter(torch.randn(1, num_ip_tokens, hidden_dim))
 
         # image projection
-        self.proj_in = nn.Linear(image_dim, hidden_dim)
+        self.image_proj_in = nn.Linear(image_dim, hidden_dim)
+        self.text_proj_in = nn.Linear(text_dim, hidden_dim)
 
         self.blocks = nn.ModuleList(
             [
@@ -358,8 +420,9 @@ class ImageTextProjector(nn.Module):
 
         ip_tokens = self.ip_tokens.repeat(batch_size, 1, 1)
 
-        # image projection
-        image_features = self.proj_in(image_features)
+        # projection
+        image_features = self.image_proj_in(image_features)
+        text_features = self.text_proj_in(text_features)
 
         for block in self.blocks:
             image_features, ip_tokens = self._forward_block(
