@@ -65,7 +65,7 @@ class ImageCaptionPairWithReference(ImageCaptionPair):
         )
 
 
-class StyledTextToImageBucket(TextToImageBucket):
+class ReferencedTextToImageBucket(TextToImageBucket):
     def __init__(
         self,
         reference_size: int,
@@ -116,7 +116,7 @@ class StyledTextToImageBucket(TextToImageBucket):
             crop_image, top, left, crop_height, crop_width, height, width = (
                 self.random_crop(image)
             )
-            images.append(self.crop_transform(crop_image))
+            images.append(crop_image)
             original_size.append(torch.tensor([height, width]))
             target_size.append(torch.tensor([crop_height, crop_width]))
             crop_coords_top_left.append(torch.tensor([top, left]))
@@ -193,10 +193,10 @@ class StyledTextToImageBucket(TextToImageBucket):
             }
 
 
-class StyledTextToImageDatasetConfig(TextToImageDatasetConfig):
+class ReferencedTextToImageDatasetConfig(TextToImageDatasetConfig):
     metadata_parquet: str
 
-    style_image_size: int = 384
+    image_size: int = 384
     background_color: int = 0  # 0 for black, 1 for white
 
     def _retrive_images(self):
@@ -271,7 +271,7 @@ class StyledTextToImageDatasetConfig(TextToImageDatasetConfig):
 
             width, height = ar_buckets[bucket_idx]
 
-            bucket = StyledTextToImageBucket(
+            bucket = ReferencedTextToImageBucket(
                 items=pairs,
                 batch_size=self.batch_size,
                 width=width,
@@ -279,7 +279,7 @@ class StyledTextToImageDatasetConfig(TextToImageDatasetConfig):
                 do_upscale=self.do_upscale,
                 num_repeats=self.num_repeats,
                 caption_processors=self.caption_processors,
-                reference_size=self.style_image_size,
+                reference_size=self.image_size,
                 background_color=self.background_color,
             )
             buckets.append(bucket)

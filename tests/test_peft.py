@@ -8,6 +8,8 @@ from src.modules.peft import (
     LoRAConfig,
     LoRALinear,
     LoRAConv2d,
+    LoHaConfig,
+    LoHaLinear,
     get_adapter_parameters,
     PeftTargetConfig,
 )
@@ -293,6 +295,7 @@ def test_replace_lora_linear_multiple_target():
 def test_save_lora_weight():
     with init_empty_weights():
         model = AuraFlowModel(AuraFlowConig(checkpoint_path="meta"))
+    model.to_empty(device="cpu")
 
     config = PeftTargetConfig(
         config=LoRAConfig(
@@ -338,3 +341,102 @@ def test_save_lora_weight():
     }
     assert all(key.startswith("diffusion_model.") for key in comfy_state_dict.keys())
     save_file(comfy_state_dict, "output/lora_empty.safetensors")
+
+
+@torch.no_grad()
+def test_replace_loha_linear():
+    class ChildLayer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.child_1 = nn.Linear(10, 10)  # <- target
+            self.child_extra = nn.Linear(10, 10)
+
+        def forward(self, x):
+            out = self.child_1(x)
+            out = self.child_extra(out)
+            return out
+
+    class TestModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Sequential(
+                nn.Linear(10, 10),  # <- target
+                nn.ReLU(),
+                nn.Linear(10, 10),
+            )
+            self.layer2 = nn.Sequential(
+                nn.Linear(10, 10),
+                nn.ReLU(),
+                nn.Linear(10, 10),
+            )
+            self.child = ChildLayer()
+            self.last_layer = nn.ModuleList(
+                [
+                    nn.Linear(10, 20),  # <- target
+                ]
+            )
+
+        def forward(self, x):
+            out = self.layer1(x)
+            out = self.layer2(out)
+            out = self.last_layer[0](out)
+            return out
+
+    model = TestModel().to(torch.float16)
+
+    config = PeftTargetConfig(
+        config=LoHaConfig(
+            type="loha",
+            dtype="float16",
+            rank=4,
+            alpha=1.0,
+            dropout=0.0,
+        ),
+        include_keys=[".0", RegexMatch(regex=r".*\.child_\d+")],
+        exclude_keys=["layer2"],
+    )
+
+    inputs = torch.randn(1, 10, dtype=torch.float16)
+    original_output = model(inputs)
+
+    config.replace_to_peft_layer(model, freeze_base=True)
+
+    assert isinstance(model.layer1[0], LoHaLinear)
+    assert model.layer1[0].hada_w1_a.shape == torch.Size([10, 4])
+    assert model.layer1[0].hada_w1_b.shape == torch.Size([4, 10])
+    assert model.layer1[0].hada_w2_a.shape == torch.Size([10, 4])
+    assert model.layer1[0].hada_w2_b.shape == torch.Size([4, 10])
+
+    loha_output = model(inputs)
+
+    # must be equal because initial LoHa output is zero
+    assert torch.equal(original_output, loha_output)
+
+    # loha module must be trainable
+    for name, param in model.named_parameters():
+        if "hada_" in name:
+            assert param.requires_grad is True
+        else:
+            assert param.requires_grad is False, name
+
+    adapter_params = get_adapter_parameters(model)
+    assert len(adapter_params) == 5 * 3
+    assert sorted(adapter_params.keys()) == sorted(
+        [
+            "layer1.0.hada_w1_a",
+            "layer1.0.hada_w1_b",
+            "layer1.0.hada_w2_a",
+            "layer1.0.hada_w2_b",
+            "layer1.0.alpha",
+            "child.child_1.hada_w1_a",
+            "child.child_1.hada_w1_b",
+            "child.child_1.hada_w2_a",
+            "child.child_1.hada_w2_b",
+            "child.child_1.alpha",
+            "last_layer.0.hada_w1_a",
+            "last_layer.0.hada_w1_b",
+            "last_layer.0.hada_w2_a",
+            "last_layer.0.hada_w2_b",
+            "last_layer.0.alpha",
+        ]
+    )

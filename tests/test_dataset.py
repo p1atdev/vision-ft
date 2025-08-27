@@ -12,6 +12,7 @@ from src.dataset.aspect_ratio_bucket import (
 from src.dataset.text_to_image import (
     TextToImageDatasetConfig,
 )
+from src.dataset.transform import ColorChannelSwap
 from src.dataloader import get_dataloader_for_bucketing
 
 
@@ -82,3 +83,38 @@ def test_text_to_image_dataset():
 
         if i > 10:
             break
+
+
+def test_color_channel_swap():
+    # Test ColorChannelSwap transform
+    swap_transform = ColorChannelSwap(swap=(2, 1, 0), skip=False)
+
+    # Create a dummy image tensor with shape (3, H, W)
+    img = torch.randn(3, 64, 64)
+
+    # Apply the color channel swap
+    swapped_img = swap_transform(img)
+
+    # Check if the channels are swapped correctly
+    assert swapped_img.shape == img.shape, "Shape mismatch after channel swap"
+    assert torch.allclose(swapped_img[0], img[2]), "Red channel should be blue"
+    assert torch.allclose(swapped_img[1], img[1]), "Green channel should remain green"
+    assert torch.allclose(swapped_img[2], img[0]), "Blue channel should be red"
+
+    batch_img = img.unsqueeze(0)  # Add batch dimension
+
+    swapped_batch_img = swap_transform(batch_img)
+
+    # Check if the batch channels are swapped correctly
+    assert swapped_batch_img.shape == batch_img.shape, (
+        "Shape mismatch after channel swap in batch"
+    )
+    assert torch.allclose(swapped_batch_img[0, 0], img[2]), (
+        "Red channel should be blue in batch"
+    )
+    assert torch.allclose(swapped_batch_img[0, 1], img[1]), (
+        "Green channel should remain green in batch"
+    )
+    assert torch.allclose(swapped_batch_img[0, 2], img[0]), (
+        "Blue channel should be red in batch"
+    )

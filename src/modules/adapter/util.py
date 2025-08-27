@@ -24,6 +24,13 @@ class Adapter(nn.Module, ABC):
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
 
+    @abstractmethod
+    def get_module_dict(self) -> dict[str, nn.Module]:
+        """
+        Returns a dictionary of modules that this adapter manages.
+        """
+        raise NotImplementedError("This method should be overridden by subclasses.")
+
 
 class AdapterManager(nn.Module, ABC):
     module_dict: nn.ModuleDict
@@ -48,11 +55,15 @@ class AdapterManager(nn.Module, ABC):
 
     def load_adapter(self, model: nn.Module, state_dict: dict[str, torch.Tensor]):
         with init_empty_weights():
-            self.model.apply_adapter(model)
+            self.apply_adapter(model)
 
         # load state dict
         # rename
-        state_dict = {k.replace(".", "!"): v for k, v in state_dict.items()}
+        state_dict = {
+            # replace the last '.' with '!' except last one
+            k.replace(".", "!", k.count(".") - 1): v
+            for k, v in state_dict.items()
+        }
         self.module_dict.load_state_dict(state_dict, assign=True)
 
     def parameters(self):

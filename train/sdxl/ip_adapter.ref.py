@@ -14,7 +14,7 @@ from src.models.sdxl.adapter.ip_adapter import (
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
-from src.dataset.styled_text_to_image import StyledTextToImageDatasetConfig
+from src.dataset.referenced_text_to_image import ReferencedTextToImageDatasetConfig
 from src.dataset.preview.text_to_image import TextToImagePreviewConfig
 from src.modules.loss.diffusion import (
     prepare_noised_latents,
@@ -29,6 +29,7 @@ from src.utils.logging import wandb_image
 
 class SDXLModelWithIPAdapterTrainingConfig(SDXLModelWithIPAdapterConfig):
     max_token_length: int = 225  # 75 * 3
+    drop_image_rate: float = 0.15
 
     freeze_vision_encoder: bool = True
 
@@ -158,9 +159,20 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
 
             latents = self.model.encode_image(pixel_values)
             timesteps = self.sample_timestep(latents.shape)
+            drop_image = (
+                torch.rand(
+                    reference_pixel_values.size(0), device=self.accelerator.device
+                )
+                < self.model_config.drop_image_rate
+            )
 
         # ip adapter inputs
-        ip_tokens = self.model.encode_reference_image(reference_pixel_values)
+        ip_tokens: torch.Tensor = self.model.encode_reference_image(
+            reference_pixel_values,
+            encoder_hidden_states,  # for image-text projector
+        )
+        # drop ip tokens randomly for cfg
+        ip_tokens[drop_image] = 0
 
         # cat with seq len to pass through the model
         encoder_hidden_states = torch.cat(
@@ -268,6 +280,18 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         state_dict = {remove_orig_mod_prefix(k): v for k, v in state_dict.items()}
         return state_dict
 
+    def get_metadata_to_save(self) -> dict[str, str]:
+        if self.model_config.adapter.projector_type == "resampler":
+            return {
+                "num_heads": str(
+                    self.model_config.adapter.projector_args.get(
+                        "num_heads",
+                        8,
+                    )
+                ),
+            }
+        return {}
+
     def before_setup_model(self):
         pass
 
@@ -286,7 +310,7 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_train_dataset_class(StyledTextToImageDatasetConfig)
+    trainer.register_train_dataset_class(ReferencedTextToImageDatasetConfig)
     trainer.register_preview_dataset_class(TextToImagePreviewConfig)
     trainer.register_model_class(SDXLIPAdapterTraining)
 

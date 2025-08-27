@@ -32,3 +32,18 @@ class PeftLayer(ABC, nn.Module):
         original_layer: nn.Module,
     ) -> "PeftLayer":
         pass
+
+    @abstractmethod
+    def load_weights(
+        self,
+        adapter_weights: dict[str, torch.Tensor | None],
+    ) -> None:
+        """
+        Load adapter weights into the layer.
+
+        Args:
+            adapter_weights (dict): Dictionary containing adapter weights.
+            strict (bool): Whether to enforce strict loading of weights.
+            assign (bool): Whether to assign weights directly.
+        """
+        pass

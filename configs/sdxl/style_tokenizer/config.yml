@@ -30,11 +30,11 @@ model:
 
 peft:
 
-# StyledTextToImageDatasetConfig
+# ReferencedTextToImageDatasetConfig
 dataset:
   folder: "data/styled_images_1k"
   metadata_parquet: "data/metadata_styled_images_1k.parquet"
-  style_image_size: 512
+  image_size: 512
   background_color: 0 # 0 for black, 255 for white
 
   num_repeats: 4

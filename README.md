@@ -1,5 +1,7 @@
 # Vision model finetuning scripts
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/p1atdev/vision-ft)
+
 WIP
 
 ## Features
@@ -11,8 +13,9 @@ WIP
 
 ### Models
 
-- [x] SDXL
-- [x] AuraFlow
+- [x] [SDXL](./src/models/sdxl)
+- [x] [AuraFlow](./src/models/auraflow)
+- [x] [Lumina Image 2.0](./src/models/lumina2)
 - [ ] Flux & Flex (WIP)
 - [ ] CogView4 (WIP)
 - [ ] FractalGen (TODO)
@@ -37,6 +40,7 @@ uv sync --all-extras
 - https://github.com/huggingface/diffusers
 - https://github.com/Stability-AI/sd3-ref
 - https://github.com/black-forest-labs/flux
+- https://github.com/Alpha-VLLM/Lumina-Image-2.0
   - Model implementation
 
 - https://github.com/microsoft/LoRA

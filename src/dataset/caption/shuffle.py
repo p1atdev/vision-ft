@@ -21,6 +21,7 @@ class CaptionShuffle(CaptionProcessorMixin):
 
         return self.concat_separator.join(items)
 
+
 class CaptionShuffleInGroup(CaptionProcessorMixin):
     type: Literal["shuffle_in_group"] = "shuffle_in_group"
 
@@ -38,9 +39,8 @@ class CaptionShuffleInGroup(CaptionProcessorMixin):
         random.shuffle(items)
 
         return self.concat_separator.join(items)
-        
 
     def process(self, caption: str) -> str:
         groups = caption.split(self.group_separator)
         shuffled_groups = [self.shuffle(group) for group in groups]
-        return self.group_separator.join(shuffled_groups)
+        return self.concat_separator.join(shuffled_groups)

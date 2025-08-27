@@ -15,7 +15,7 @@ from src.models.auto import AutoImageEncoder
 from src.models.for_training import ModelForTraining
 from src.trainer.common import Trainer
 from src.config import TrainConfig
-from src.dataset.styled_text_to_image import StyledTextToImageDatasetConfig
+from src.dataset.referenced_text_to_image import ReferencedTextToImageDatasetConfig
 from src.dataset.preview.text_to_image import TextToImagePreviewConfig
 from src.dataset.transform import PaddedResize
 from src.modules.loss.diffusion import (
@@ -31,6 +31,7 @@ from src.utils.logging import wandb_image
 
 class SDXLModelWithStyleTokenizerTrainingConfig(SDXLModelWithStyleTokenizerConfig):
     max_token_length: int = 225  # 75 * 3
+    drop_image_rate: float = 0.1
 
     freeze_vision_encoder: bool = True
     freeze_projector: bool = False
@@ -159,6 +160,13 @@ class SDXLStyleTokenizerTraining(ModelForTraining, nn.Module):
             reference_output.style_tokens_1,
             reference_output.style_tokens_2,
         )
+        # drop reference images randomly for cfg
+        drop_image_mask = (
+            torch.rand(pixel_values.shape[0], device=self.accelerator.device)
+            < self.model_config.drop_image_rate
+        )
+        style_tokens_1[drop_image_mask] = 0
+        style_tokens_2[drop_image_mask] = 0
 
         # 2. Encode text prompts and style tokens
         encoder_output = self.model.text_encoder.encode_prompts(
@@ -306,7 +314,7 @@ def main(config: str):
     trainer = Trainer(
         _config,
     )
-    trainer.register_train_dataset_class(StyledTextToImageDatasetConfig)
+    trainer.register_train_dataset_class(ReferencedTextToImageDatasetConfig)
     trainer.register_preview_dataset_class(TextToImagePreviewConfig)
     trainer.register_model_class(SDXLStyleTokenizerTraining)
 

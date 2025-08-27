@@ -44,6 +44,9 @@ class ModelForTraining(ABC, nn.Module):
     def _set_is_peft(self, is_peft: bool):
         self._is_peft = is_peft
 
+    def load_peft_weights(self):
+        pass
+
     @abstractmethod
     def before_setup_model(self):
         pass
@@ -122,6 +125,12 @@ class ModelForTraining(ABC, nn.Module):
         self,
     ) -> dict[str, torch.Tensor]:
         return self.model.state_dict()
+
+    def get_metadata_to_save(
+        self,
+    ) -> dict[str, str]:
+        # additional metadata to save with weights into the safetensors
+        return {}
 
     def before_save_model(self):
         pass

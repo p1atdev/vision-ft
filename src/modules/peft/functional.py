@@ -8,16 +8,15 @@ from torch import nn
 from .config import PeftConfigMixin, PEFT_TYPE
 from .util import PeftLayer
 from .lora import LoRAConfig, LoRALinear, LoRAConv2d
+from .loha import LoHaConfig, LoHaLinear
 from ...utils.tensor import remove_orig_mod_prefix
-from ...utils.dtype import str_to_dtype
 from ...utils.state_dict import get_target_keys, RegexMatch
 
 
 def _get_peft_linear(
     module: nn.Linear,
     config: PeftConfigMixin,
-    dtype: torch.dtype | None = None,
-) -> nn.Module:
+) -> PeftLayer:
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
 
@@ -26,8 +25,13 @@ def _get_peft_linear(
         return LoRALinear(
             config=config,
             original_linear=module,
-            dropout=config.dropout,
-            dtype=dtype,
+        )
+
+    elif config.type == "loha":
+        config = LoHaConfig.model_validate(config.model_dump())
+        return LoHaLinear(
+            config=config,
+            original_linear=module,
         )
 
     else:
@@ -37,18 +41,15 @@ def _get_peft_linear(
 def _get_peft_conv2d(
     module: nn.Conv2d,
     config: PeftConfigMixin,
-    dtype: torch.dtype | None = None,
 ) -> nn.Module:
     if config.type == "none":
         raise ValueError("peft type 'none' is not parameter efficient training")
 
-    if config.type == "lora":
+    if (config.type == "lora") or (config.type == "loha"):
         config = LoRAConfig.model_validate(config.model_dump())
         return LoRAConv2d(
             config=config,
             original_conv2d=module,
-            dropout=config.dropout,
-            dtype=dtype,
         )
 
     else:
@@ -73,9 +74,7 @@ def _replace_to_peft_layer(
                 continue
 
             # replace with peft module
-            peft_module = _get_peft_linear(
-                layer, config, dtype=str_to_dtype(config.dtype)
-            )
+            peft_module = _get_peft_linear(layer, config)
             setattr(model, name, peft_module)
 
         elif isinstance(layer, nn.Conv2d):
@@ -83,9 +82,7 @@ def _replace_to_peft_layer(
                 continue
 
             # replace with peft module
-            peft_module = _get_peft_conv2d(
-                layer, config, dtype=str_to_dtype(config.dtype)
-            )
+            peft_module = _get_peft_conv2d(layer, config)
             setattr(model, name, peft_module)
         else:
             _replace_to_peft_layer(
@@ -128,6 +125,34 @@ def get_adapter_parameters(model: nn.Module) -> dict[str, torch.Tensor]:
     return adapter_params
 
 
+def extract_peft_internal_modules(
+    model: nn.Module,
+) -> dict[str, nn.Module]:
+    peft_modules = {}
+
+    for name, module in model.named_modules():
+        if (param_names := getattr(module, "adapter_param_names", None)) is not None:
+            for param_name in param_names:
+                if (_m := getattr(module, param_name, None)) and isinstance(
+                    _m, nn.Module
+                ):
+                    peft_modules[f"{name}.{param_name}"] = getattr(module, param_name)
+
+    return peft_modules
+
+
+def extract_peft_layers(
+    model: nn.Module,
+) -> dict[str, PeftLayer]:
+    peft_layers = {}
+
+    for name, module in model.named_modules():
+        if isinstance(module, PeftLayer):
+            peft_layers[name] = module
+
+    return peft_layers
+
+
 def detect_peft_method(state_dict: dict[str, torch.Tensor]) -> PEFT_TYPE:
     if any(name.endswith(".lora_up.weight") for name in state_dict.keys()):
         return "lora"
@@ -138,6 +163,9 @@ def detect_peft_method(state_dict: dict[str, torch.Tensor]) -> PEFT_TYPE:
 def get_peft_linear_class(peft_type: PEFT_TYPE) -> type[PeftLayer]:
     if peft_type == "lora":
         return LoRALinear
+
+    elif peft_type == "loha":
+        return LoHaLinear
 
     raise ValueError(f"Unknown peft type: {peft_type}")
 
@@ -159,7 +187,13 @@ def _load_peft_weight(
                 param_name: state_dict.get(f"{full_name}.{param_name}")
                 for param_name in peft_class.adapter_weight_names
             }
-            if all([value is not None for value in adapter_state_dict.values()]):
+            if all(
+                [
+                    value is not None
+                    for key, value in adapter_state_dict.items()
+                    if "bias" not in key
+                ]
+            ):
                 layer.load_weights(adapter_state_dict)
 
         elif isinstance(layer, nn.Linear):
@@ -169,7 +203,14 @@ def _load_peft_weight(
                 param_name: state_dict.get(f"{full_name}.{param_name}")
                 for param_name in peft_class.adapter_weight_names
             }
-            if all([value is not None for value in adapter_state_dict.values()]):
+            # check if all adapter weights except bias are present
+            if all(
+                [
+                    value is not None
+                    for key, value in adapter_state_dict.items()
+                    if "bias" not in key
+                ]
+            ):
                 lora_layer = peft_class.from_weights(
                     adapter_state_dict,  # type: ignore
                     layer,

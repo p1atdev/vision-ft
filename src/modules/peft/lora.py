@@ -5,6 +5,7 @@ from typing import Literal
 
 from .config import PeftConfigMixin
 from .util import PeftLayer
+from ...utils.dtype import str_to_dtype
 
 
 class LoRAConfig(PeftConfigMixin):
@@ -28,12 +29,11 @@ class LoRALinear(PeftLayer):
         self,
         config: LoRAConfig,
         original_linear: nn.Linear,
-        dropout: float = 0.0,
-        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
 
         self.config = config
+        dtype = str_to_dtype(config.dtype)
 
         # get original parameters
         in_features = original_linear.in_features
@@ -42,8 +42,13 @@ class LoRALinear(PeftLayer):
         # lora modules
         self.lora_down = nn.Linear(in_features, config.rank, bias=False, dtype=dtype)
         self.lora_up = nn.Linear(config.rank, out_features, bias=False, dtype=dtype)
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
+        self.dropout = (
+            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
+        )
+        self.alpha = nn.Parameter(
+            torch.tensor(config.alpha, dtype=dtype),
+            requires_grad=False,
+        )
         self.rank = config.rank
         if config.use_bias:
             self.lora_up.bias = nn.Parameter(torch.zeros(out_features, dtype=dtype))
@@ -58,15 +63,28 @@ class LoRALinear(PeftLayer):
         if self.linear.bias is not None:
             self.linear.bias.requires_grad_(False)
 
-        # freeze LoRA alpha
-        self.alpha.requires_grad_(False)
-
         self.init_weights()
 
     def init_weights(self) -> None:
+        self.lora_down.to_empty(device=self.linear.weight.device)
+        self.lora_up.to_empty(device=self.linear.weight.device)
+        self.dropout.to_empty(device=self.linear.weight.device)
+
         # following: https://github.com/pytorch/torchtune/blob/aa8f365f91a69aa36aaea14cf6f03ccd45310bb6/torchtune/modules/peft/lora.py#L102-L106
         nn.init.kaiming_uniform_(self.lora_down.weight)
         nn.init.zeros_(self.lora_up.weight)
+        if self.lora_up.bias is not None:
+            nn.init.zeros_(self.lora_up.bias)
+
+        self.alpha = nn.Parameter(
+            torch.tensor(self.config.alpha, dtype=self.lora_down.weight.dtype),
+            requires_grad=False,
+        )
+        self.dropout = (
+            nn.Dropout(self.config.dropout)
+            if self.config.dropout > 0
+            else nn.Identity()
+        )
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
@@ -84,6 +102,24 @@ class LoRALinear(PeftLayer):
         lora_output = lora_up * (self.alpha / self.rank)
 
         return original_output + lora_output
+
+    def train(self, mode: bool = True) -> "LoRALinear":
+        self.lora_down.train(mode)
+        self.lora_up.train(mode)
+
+        # do not train original linear layer
+        self.linear.train(False)
+
+        return self
+
+    def requires_grad_(self, requires_grad: bool = True) -> "LoRALinear":
+        self.lora_down.requires_grad_(requires_grad)
+        self.lora_up.requires_grad_(requires_grad)
+
+        # do not train original linear layer
+        self.linear.weight.requires_grad_(False)
+
+        return self
 
     @classmethod
     def from_weights(
@@ -115,6 +151,17 @@ class LoRALinear(PeftLayer):
 
         return module
 
+    def load_weights(self, adapter_weights: dict[str, torch.Tensor | None]) -> None:
+        device = self.lora_down.weight.device
+        if (weight := adapter_weights.get("lora_down.weight")) is not None:
+            self.lora_down.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.weight")) is not None:
+            self.lora_up.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.bias")) is not None:
+            self.lora_up.bias = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("alpha")) is not None:
+            self.alpha = nn.Parameter(weight.to(device))
+
 
 # ref: https://github.com/kohya-ss/sd-scripts/blob/52c8dec9534e9dea1226bf6e8d6ad3b1483d63aa/networks/lora.py#L59
 class LoRAConv2d(PeftLayer):
@@ -130,12 +177,11 @@ class LoRAConv2d(PeftLayer):
         self,
         config: LoRAConfig,
         original_conv2d: nn.Conv2d,
-        dropout: float = 0.0,
-        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
 
         self.config = config
+        dtype = str_to_dtype(config.dtype)
 
         # get original parameters
         in_channels = original_conv2d.in_channels
@@ -162,7 +208,9 @@ class LoRAConv2d(PeftLayer):
             bias=False,
             dtype=dtype,
         )
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.dropout = (
+            nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
+        )
         self.alpha = nn.Parameter(torch.tensor(config.alpha, dtype=dtype))
         self.rank = config.rank
         if config.use_bias:
@@ -205,6 +253,20 @@ class LoRAConv2d(PeftLayer):
 
         return original_output + lora_output
 
+    def train(self, mode: bool = True) -> "LoRAConv2d":
+        super().train(mode)
+        # do not train original convolution layer
+        self.conv2d.train(False)
+
+        return self
+
+    def requires_grad_(self, requires_grad: bool = True) -> "LoRAConv2d":
+        super().requires_grad_(requires_grad)
+        # do not train original convolution layer
+        self.conv2d.requires_grad_(False)
+
+        return self
+
     @classmethod
     def from_weights(
         cls,
@@ -234,3 +296,14 @@ class LoRAConv2d(PeftLayer):
             )
 
         return module
+
+    def load_weights(self, adapter_weights: dict[str, torch.Tensor | None]) -> None:
+        device = self.lora_down.weight.device
+        if (weight := adapter_weights.get("lora_down.weight")) is not None:
+            self.lora_down.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.weight")) is not None:
+            self.lora_up.weight = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("lora_up.bias")) is not None:
+            self.lora_up.bias = nn.Parameter(weight.to(device))
+        if (weight := adapter_weights.get("alpha")) is not None:
+            self.alpha = nn.Parameter(weight.to(device))

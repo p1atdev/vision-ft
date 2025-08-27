@@ -1,5 +1,4 @@
 from typing import NamedTuple, Literal
-import math
 
 import torch
 import torch.nn as nn
@@ -43,6 +42,7 @@ class SelfAttention(nn.Module):
         self.inner_dim = num_heads * head_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
+        self.dropout = dropout
         self.attn_implementation: AttentionImplementation = attn_implementation
 
         self.to_q = nn.Linear(self.inner_dim, self.inner_dim, bias=False)
@@ -106,6 +106,8 @@ class CrossAttention(nn.Module):
     ):
         super().__init__()
 
+        self.query_dim = query_dim
+        self.context_dim = context_dim
         self.inner_dim = num_heads * head_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -126,6 +128,9 @@ class CrossAttention(nn.Module):
         query: torch.Tensor,
         context: torch.Tensor,
         mask: torch.Tensor | None = None,
+        time_embedding: torch.Tensor | None = None,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         q = self.to_q(query)
         k = self.to_k(context)
@@ -206,6 +211,9 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
+    self_attention_class: type[SelfAttention] = SelfAttention
+    cross_attention_class: type[CrossAttention] = CrossAttention
+
     def __init__(
         self,
         hidden_dim: int,
@@ -216,7 +224,13 @@ class TransformerBlock(nn.Module):
     ):
         super().__init__()
 
-        self.attn1 = SelfAttention(
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.context_dim = context_dim
+        self.attn_implementation: AttentionImplementation = attn_implementation
+
+        self.attn1 = self.self_attention_class(
             num_heads=num_heads,
             head_dim=head_dim,
             dropout=0.0,
@@ -224,7 +238,7 @@ class TransformerBlock(nn.Module):
         )
         self.ff = FeedForward(hidden_dim=hidden_dim, dropout=0.0)
 
-        self.attn2 = CrossAttention(
+        self.attn2 = self.cross_attention_class(
             query_dim=hidden_dim,
             context_dim=context_dim,
             num_heads=num_heads,
@@ -238,7 +252,12 @@ class TransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(hidden_dim)
 
     def forward(
-        self, hidden_states: torch.Tensor, context: torch.Tensor
+        self,
+        hidden_states: torch.Tensor,
+        context: torch.Tensor,
+        time_embedding: torch.Tensor,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         # 1. self attention
         hidden_states = hidden_states + self.attn1(
@@ -247,7 +266,10 @@ class TransformerBlock(nn.Module):
 
         # 2. cross attention
         hidden_states = hidden_states + self.attn2(
-            self.norm2(hidden_states), context=context
+            self.norm2(hidden_states),
+            context=context,
+            # ↓ not always used. only used when using AdaLN-Zero IP-Adapter
+            time_embedding=time_embedding,
         )
 
         # 3. feed forward
@@ -264,6 +286,7 @@ class SpatialTransformer(nn.Module):
         head_dim: int,
         context_dims: list[int] = [2048],
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -279,7 +302,7 @@ class SpatialTransformer(nn.Module):
 
         self.transformer_blocks = nn.ModuleList(
             [
-                TransformerBlock(
+                transformer_block_class(
                     hidden_dim=self.inner_dim,
                     num_heads=num_heads,
                     head_dim=head_dim,
@@ -296,6 +319,8 @@ class SpatialTransformer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         context: torch.Tensor | None = None,
+        time_embedding: torch.Tensor | None = None,
+        transformer_args: dict | None = {},
     ) -> torch.Tensor:
         batch_size, num_channels, height, width = hidden_states.shape
 
@@ -311,8 +336,18 @@ class SpatialTransformer(nn.Module):
         )
 
         hidden_states = self.proj_in(hidden_states)
+        transformer_args = transformer_args or {}
+        transformer_args |= {
+            "height": height,
+            "width": width,
+        }
         for i, block in enumerate(self.transformer_blocks):
-            hidden_states = block(hidden_states, context=context)
+            hidden_states = block(
+                hidden_states,
+                context=context,
+                time_embedding=time_embedding,
+                **transformer_args,
+            )
         hidden_states = self.proj_out(hidden_states)
 
         hidden_states = (
@@ -589,6 +624,7 @@ class DownBlocks(nn.Module):
         num_head_channels: int = 64,
         context_dim: int = 2048,
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -656,6 +692,7 @@ class DownBlocks(nn.Module):
                             head_dim=num_head_channels,
                             context_dims=[context_dim] * num_transformers,
                             attn_implementation=attn_implementation,
+                            transformer_block_class=transformer_block_class,
                         )
                     )
 
@@ -684,7 +721,9 @@ class DownBlocks(nn.Module):
         self,
         hidden_states: torch.Tensor,
         context: torch.Tensor,
-        embedding: torch.Tensor,
+        global_embedding: torch.Tensor,
+        time_embedding: torch.Tensor,
+        transformer_args: dict | None = {},
     ) -> DownBlocksOutput:
         skip_connections: list[torch.Tensor] = []
 
@@ -697,7 +736,7 @@ class DownBlocks(nn.Module):
                     hidden_states = _forward_layer(
                         layer,
                         hidden_states,
-                        embedding,
+                        global_embedding,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, SpatialTransformer):
@@ -705,6 +744,8 @@ class DownBlocks(nn.Module):
                         layer,
                         hidden_states,
                         context,
+                        time_embedding,
+                        transformer_args,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Downsample):
@@ -737,6 +778,7 @@ class MidBlock(nn.Module):
         num_head_channels: int = 64,
         context_dim: int = 2048,
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -760,6 +802,7 @@ class MidBlock(nn.Module):
                     head_dim=num_head_channels,
                     context_dims=[context_dim] * num_transformers,
                     attn_implementation=attn_implementation,
+                    transformer_block_class=transformer_block_class,
                 ),
             )
 
@@ -779,14 +822,16 @@ class MidBlock(nn.Module):
         self,
         hidden_states: torch.Tensor,
         context: torch.Tensor,
-        embedding: torch.Tensor,
+        global_embedding: torch.Tensor,
+        time_embedding: torch.Tensor,
+        transformer_args: dict | None = {},
     ) -> torch.Tensor:
         for layer in self.blocks:
             if isinstance(layer, ResidualBlock):
                 hidden_states = _forward_layer(
                     layer,
                     hidden_states,
-                    embedding,
+                    global_embedding,
                     gradient_checkpointing=self.gradient_checkpointing,
                 )
             elif isinstance(layer, SpatialTransformer):
@@ -794,6 +839,8 @@ class MidBlock(nn.Module):
                     layer,
                     hidden_states,
                     context,
+                    time_embedding,
+                    transformer_args,
                     gradient_checkpointing=self.gradient_checkpointing,
                 )
             else:
@@ -821,6 +868,7 @@ class UpBlocks(nn.Module):
         num_head_channels: int = 64,
         context_dim: int = 2048,
         attn_implementation: AttentionImplementation = "eager",
+        transformer_block_class: type[TransformerBlock] = TransformerBlock,
     ):
         super().__init__()
 
@@ -877,6 +925,7 @@ class UpBlocks(nn.Module):
                             head_dim=num_head_channels,
                             context_dims=[context_dim] * num_transformers,
                             attn_implementation=attn_implementation,
+                            transformer_block_class=transformer_block_class,
                         )
                     )
 
@@ -900,9 +949,11 @@ class UpBlocks(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        embedding: torch.Tensor,
         context: torch.Tensor,
+        global_embedding: torch.Tensor,
+        time_embedding: torch.Tensor,
         skip_connections: list[torch.Tensor],
+        transformer_args: dict | None = {},
     ) -> torch.Tensor:
         for layer_list in self.blocks:
             if not isinstance(layer_list, nn.ModuleList):
@@ -916,7 +967,7 @@ class UpBlocks(nn.Module):
                     hidden_states = _forward_layer(
                         layer,
                         hidden_states,
-                        embedding,
+                        global_embedding,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, SpatialTransformer):
@@ -924,6 +975,8 @@ class UpBlocks(nn.Module):
                         layer,
                         hidden_states,
                         context,
+                        time_embedding,
+                        transformer_args,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Upsample):
@@ -942,6 +995,8 @@ class UpBlocks(nn.Module):
 
 
 class UNet(nn.Module):
+    transformer_block_class: type[TransformerBlock] = TransformerBlock
+
     def __init__(
         self,
         in_channels: int = 4,
@@ -1001,6 +1056,7 @@ class UNet(nn.Module):
             conv_resample=conv_resample,
             context_dim=context_dim,
             attn_implementation=attn_implementation,
+            transformer_block_class=self.transformer_block_class,
         )
 
         self.middle_block = MidBlock(
@@ -1012,6 +1068,7 @@ class UNet(nn.Module):
             num_head_channels=num_head_channels,
             context_dim=context_dim,
             attn_implementation=attn_implementation,
+            transformer_block_class=self.transformer_block_class,
         )
 
         # the skip connection size
@@ -1038,6 +1095,7 @@ class UNet(nn.Module):
             conv_resample=conv_resample,
             num_head_channels=num_head_channels,
             context_dim=context_dim,
+            transformer_block_class=self.transformer_block_class,
         )
 
         self.out = nn.Sequential(
@@ -1107,7 +1165,7 @@ class UNet(nn.Module):
             global_cond + time_embed
         )
 
-        return global_cond
+        return time_embed, global_cond
 
     def forward(
         self,
@@ -1121,7 +1179,7 @@ class UNet(nn.Module):
     ) -> torch.Tensor:
         # 1. global condition embedding
         # global condition embedding, including timestep and image sizes
-        global_cond = self.prepare_global_condition(
+        time_embed, global_cond = self.prepare_global_condition(
             timestep,
             encoder_pooler_output,
             original_size,
@@ -1132,15 +1190,27 @@ class UNet(nn.Module):
 
         # 2. down blocks
         latents, skip_connections = self.input_blocks(
-            latents, encoder_hidden_states, global_cond
+            latents,
+            context=encoder_hidden_states,
+            global_embedding=global_cond,
+            time_embedding=time_embed,
         )
 
         # 3. middle blocks
-        latents = self.middle_block(latents, encoder_hidden_states, global_cond)
+        latents = self.middle_block(
+            latents,
+            context=encoder_hidden_states,
+            global_embedding=global_cond,
+            time_embedding=time_embed,
+        )
 
         # 4. up blocks
         latents = self.output_blocks(
-            latents, global_cond, encoder_hidden_states, skip_connections
+            latents,
+            context=encoder_hidden_states,
+            global_embedding=global_cond,
+            time_embedding=time_embed,
+            skip_connections=skip_connections,
         )
 
         # 5. output

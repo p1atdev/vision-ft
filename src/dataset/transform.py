@@ -89,3 +89,30 @@ class PaddedResize:
 
     def __call__(self, img: torch.Tensor):
         return self.transform(img)
+
+
+class ColorChannelSwap:
+    """
+    Swap the color channels of an image.
+    """
+
+    def __init__(
+        self,
+        swap: Sequence[int] = (0, 1, 2),
+        skip: bool = False,
+    ) -> None:
+        self.swap = swap
+        self.skip = skip
+
+    def __call__(self, img: torch.Tensor):
+        if self.skip:
+            return img
+
+        if img.ndim == 3 and img.size(0) == 3:
+            # [C, H, W] format
+            return img[self.swap, :, :]
+        elif img.ndim == 4 and img.size(1) == 3:
+            # [B, C, H, W] format
+            return img[:, self.swap, :, :]
+        else:
+            raise ValueError("Input image must have shape (C, H, W) or (B, C, H, W).")
