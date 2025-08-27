@@ -1046,12 +1046,12 @@ class SDXLModelWithIPAdapter(SDXLModel):
                     ),
                     skip=self.config.adapter.color_channel == "rgb",
                 ),
-                v2.Normalize(
-                    mean=self.config.adapter.image_mean,
-                    std=self.config.adapter.image_std,
-                ),  # 0~1 -> -1~1
             ]
         )
+        self.normalize = v2.Normalize(
+            mean=self.config.adapter.image_mean,
+            std=self.config.adapter.image_std,
+        )  # 0~1 -> -1~1
 
     def freeze_base_model(self):
         self.denoiser.eval()
@@ -1122,6 +1122,7 @@ class SDXLModelWithIPAdapter(SDXLModel):
     def preprocess_reference_image(
         self,
         reference_image: torch.Tensor | list[Image.Image] | Image.Image,
+        normalize: bool = True,
     ) -> torch.Tensor:
         if isinstance(reference_image, Image.Image):
             reference_image = [reference_image]
@@ -1132,6 +1133,9 @@ class SDXLModelWithIPAdapter(SDXLModel):
             )
         elif isinstance(reference_image, torch.Tensor):
             reference_image: torch.Tensor = self.preprocessor(reference_image)
+
+        if normalize:
+            reference_image = self.normalize(reference_image)
 
         return reference_image
 
