@@ -181,7 +181,7 @@ class KyaraBucket(AspectRatioBucket):
         detections: KyaraDetections,
         weights: list[float],
         choices: list[str] = ["head", "upper_body", "full_body"],
-    ) -> Detection:
+    ) -> Detection | None:
         choice = random.choices(choices, weights=weights, k=1)[0]
 
         if choice == "head":
@@ -203,7 +203,8 @@ class KyaraBucket(AspectRatioBucket):
                 remaining_weights.append(w)
 
         if len(remaining_choices) == 0:
-            raise ValueError("No detections available.")
+            # しゃーなしなので None を返す -> 全体をそのまま使用する
+            return None
 
         return self.choice_detection(detections, remaining_weights, remaining_choices)
 
@@ -211,7 +212,9 @@ class KyaraBucket(AspectRatioBucket):
         self,
         index: int,  # バッチ内のインデックス
         batch: dict[str, list[list[int]] | Sequence | torch.Tensor],
-    ) -> tuple[str, tuple[int, int, int, int]]:  # caption., choice, detection_index
+    ) -> tuple[
+        str, tuple[int, int, int, int] | None
+    ]:  # caption., choice, detection_index
         #
         id = batch["id"][index]  # type: ignore
         group_ids: list[str] = batch["group_ids"][index]  # type: ignore
@@ -239,13 +242,21 @@ class KyaraBucket(AspectRatioBucket):
         detection = self.choice_detection(ref_detections, weights, choices)
 
         # ref のタグと座標
-        general = detection.tags.general
+        general = (
+            detection.tags.general
+            if detection is not None
+            else ref_detections.whole_image_tags.general
+        )
         # characters = detection.tags.characters
         coords = (
-            detection.coords.left,
-            detection.coords.top,
-            detection.coords.right,
-            detection.coords.bottom,
+            (
+                detection.coords.left,
+                detection.coords.top,
+                detection.coords.right,
+                detection.coords.bottom,
+            )
+            if detection is not None
+            else None
         )
 
         # self の全体タグを取得する
@@ -310,8 +321,10 @@ class KyaraBucket(AspectRatioBucket):
             captions.append(caption)
 
             # クロップをする
-            image = _pil_images[i]
-            image = image.convert("RGB").crop(coords)  # type: ignore
+            image = _pil_images[i].convert("RGB")
+            if coords is not None:
+                # クロップできるならする
+                image = image.crop(coords)  # type: ignore
 
             # normalize
             detection_image = self.reference_transform(image)
