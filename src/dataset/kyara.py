@@ -74,35 +74,6 @@ class KyaraImageCaptionPair(ImageCaptionPair):
     # 同じグループの画像のidリスト
     same_group_ids: list[str]
 
-    # def read_kyara_detections(self) -> KyaraDetections | None:
-    #     json_path = self.image.with_suffix(".json")
-
-    #     if not json_path.exists():
-    #         return None
-
-    #     with open(json_path, "r") as f:
-    #         data = json.load(f)
-
-    #     detections = KyaraDetections.model_validate(data)
-
-    #     return detections
-
-    # @property
-    # def should_skip(self) -> bool:
-    #     detections = self.read_kyara_detections()
-
-    #     if detections is None:
-    #         return True
-
-    #     num_heads = len(detections.heads)
-    #     num_upper_bodies = len(detections.upper_bodies)
-    #     num_full_bodies = len(detections.full_bodies)
-
-    #     if num_heads == 0 or num_upper_bodies == 0 or num_full_bodies == 0:
-    #         return True
-
-    #     return False
-
 
 def read_kyara_detections(directory: Path, id: str) -> KyaraDetections | None:
     json_path = directory.joinpath(f"{id}.json")
