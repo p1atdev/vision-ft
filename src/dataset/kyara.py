@@ -9,6 +9,7 @@ import json
 from functools import reduce
 from collections import defaultdict
 from typing import Sequence, Iterator, NamedTuple
+import polars as pl
 
 import numpy as np
 import torch
@@ -70,34 +71,51 @@ class DetectionSamplingWeights(NamedTuple):
 
 
 class KyaraImageCaptionPair(ImageCaptionPair):
-    def read_kyara_detections(self) -> KyaraDetections | None:
-        json_path = self.image.with_suffix(".json")
+    # 同じグループの画像のidリスト
+    same_group_ids: list[str]
 
-        if not json_path.exists():
-            return None
+    # def read_kyara_detections(self) -> KyaraDetections | None:
+    #     json_path = self.image.with_suffix(".json")
 
-        with open(json_path, "r") as f:
-            data = json.load(f)
+    #     if not json_path.exists():
+    #         return None
 
-        detections = KyaraDetections.model_validate(data)
+    #     with open(json_path, "r") as f:
+    #         data = json.load(f)
 
-        return detections
+    #     detections = KyaraDetections.model_validate(data)
 
-    @property
-    def should_skip(self) -> bool:
-        detections = self.read_kyara_detections()
+    #     return detections
 
-        if detections is None:
-            return True
+    # @property
+    # def should_skip(self) -> bool:
+    #     detections = self.read_kyara_detections()
 
-        num_heads = len(detections.heads)
-        num_upper_bodies = len(detections.upper_bodies)
-        num_full_bodies = len(detections.full_bodies)
+    #     if detections is None:
+    #         return True
 
-        if num_heads == 0 or num_upper_bodies == 0 or num_full_bodies == 0:
-            return True
+    #     num_heads = len(detections.heads)
+    #     num_upper_bodies = len(detections.upper_bodies)
+    #     num_full_bodies = len(detections.full_bodies)
 
-        return False
+    #     if num_heads == 0 or num_upper_bodies == 0 or num_full_bodies == 0:
+    #         return True
+
+    #     return False
+
+
+def read_kyara_detections(directory: Path, id: str) -> KyaraDetections | None:
+    json_path = directory.joinpath(f"{id}.json")
+
+    if not json_path.exists():
+        return None
+
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    detections = KyaraDetections.model_validate(data)
+
+    return detections
 
 
 class KyaraBucket(AspectRatioBucket):
@@ -114,6 +132,7 @@ class KyaraBucket(AspectRatioBucket):
         background_color: int,
         do_upscale: bool,
         num_repeats: int,
+        image_directory: Path,
         sampling_weights: DetectionSamplingWeights = DetectionSamplingWeights(),
         caption_processors: CaptionProcessorList = [],
     ):
@@ -169,6 +188,8 @@ class KyaraBucket(AspectRatioBucket):
         self.sampling_weights = sampling_weights
         self.caption_processors = caption_processors
 
+        self.image_directory = image_directory
+
     def random_crop(self, image: torch.Tensor) -> RandomCropOutput:
         top, left, crop_height, crop_width = v2.RandomCrop.get_params(
             image, (self.height, self.width)
@@ -187,10 +208,24 @@ class KyaraBucket(AspectRatioBucket):
     def prepare_caption(
         self,
         index: int,  # バッチ内のインデックス
-        batch: dict[str, Sequence | torch.Tensor],
-    ) -> tuple[str, str, int]:  # caption., choice, detection_index
+        batch: dict[str, list[list[int]] | Sequence | torch.Tensor],
+    ) -> tuple[str, tuple[int, int, int, int]]:  # caption., choice, detection_index
+        #
+        id = batch["id"][index]  # type: ignore
+        group_ids: list[str] = batch["group_ids"][index]  # type: ignore
+        assert len(group_ids) > 0
+
+        # ランダムにどのグループを使うか選ぶ
+        group_id = random.choice(group_ids)
+
+        # id と group_id から kyara detections を読む
+        self_detections = read_kyara_detections(self.image_directory, str(id))
+        assert self_detections is not None, f"Detections for id {id} not found."
+        ref_detections = read_kyara_detections(self.image_directory, str(group_id))
+        assert ref_detections is not None, f"Detections for id {group_id} not found."
+
         ## caption prepare
-        # 1. まず、head, upper body, full body のどれを使うかを重みに従ってランダムに決める
+        # まず、head, upper body, full body のどれを使うかを重みに従ってランダムに決める
         choices = ["head", "upper_body", "full_body"]
         weights = [
             self.sampling_weights.head,
@@ -199,27 +234,34 @@ class KyaraBucket(AspectRatioBucket):
         ]
         choice = random.choices(choices, weights=weights, k=1)[0]
 
-        num_key = f"{choice}_num"
-        general_key = f"{choice}_general"
-        assert general_key in batch
-        # characters_key = f"{choice}_characters"
+        # choice に従って ref detections からタグと座標を取得する
+        detection = None
+        if choice == "head":
+            detection = random.choice(ref_detections.heads)
+        elif choice == "upper_body":
+            detection = random.choice(ref_detections.upper_bodies)
+        elif choice == "full_body":
+            detection = random.choice(ref_detections.full_bodies)
+        else:
+            raise ValueError(f"Invalid choice: {choice}")
+        assert detection is not None
 
-        num_detections: int = batch[num_key][index]  # type: ignore
-        general_tags: list[list[str]] = batch[general_key][index]  # type: ignore
-        # characters_tags: list[list[str]] = batch[characters_key][index]  # type: ignore
+        # ref のタグと座標
+        general = detection.tags.general
+        # characters = detection.tags.characters
+        coords = (
+            detection.coords.left,
+            detection.coords.top,
+            detection.coords.right,
+            detection.coords.bottom,
+        )
 
-        # 複数の detection がある場合はランダムに一つ選ぶ
-        assert num_detections > 0
-        detection_index = random.randint(0, num_detections - 1)
-        general = general_tags[detection_index]
-        # characters = characters_tags[detection_index]
+        # self の全体タグを取得する
+        whole_rating = self_detections.whole_image_tags.rating
+        whole_general = self_detections.whole_image_tags.general
+        # whole_characters = self_detections.whole_image_tags.characters
 
-        # 画像全体のキャプションも取得
-        whole_rating: str = batch["rating"][index]  # type: ignore
-        whole_general: list[str] = batch["whole_general"][index]  # type: ignore
-        # whole_characters: list[str] = batch["whole_characters"][index]  # type: ignore
-
-        #! キャプションを作成する
+        # キャプションを作成する
         # 画像全体のキャプションから、detection のタグを除外する
         final_general = list(set(whole_general) - set(general))
         # final_characters = list(set(whole_characters) - set(characters))
@@ -229,7 +271,7 @@ class KyaraBucket(AspectRatioBucket):
             character=[],  # not to use character tags!
         )
 
-        return caption, choice, detection_index
+        return caption, coords
 
     def __getitem__(self, idx: int | slice):
         # the __len__ is multiplied by num_repeats,
@@ -272,11 +314,10 @@ class KyaraBucket(AspectRatioBucket):
         detection_images: list[Image.Image] = []
         for i in range(batch_size):
             # バッチをループして、各サンプルのキャプションを準備する
-            caption, choice, detection_index = self.prepare_caption(i, batch)
+            caption, coords = self.prepare_caption(i, batch)
             captions.append(caption)
 
             # クロップをする
-            coords = batch[f"{choice}_coords"][i][detection_index]  # type: ignore
             image = _pil_images[i]
             image = image.convert("RGB").crop(coords)  # type: ignore
 
@@ -305,67 +346,19 @@ class KyaraBucket(AspectRatioBucket):
 
         return batch
 
-    def _generate_ds_from_pairs(self, pairs: list[KyaraImageCaptionPair]) -> Iterator:
+    def _generate_ds_from_pairs(
+        self,
+        pairs: list[KyaraImageCaptionPair],
+    ) -> Iterator:
         for pair in pairs:
             image = str(pair.image)
 
-            detections = pair.read_kyara_detections()
-            assert detections is not None
-
-            heads = detections.heads
-            upper_bodies = detections.upper_bodies
-            full_bodies = detections.full_bodies
-
-            whole_image_tags = detections.whole_image_tags
-
             yield {
+                "id": str(pair.image.stem),
                 "image": image,
-                # "caption": caption,
                 "width": pair.width,
                 "height": pair.height,
-                # tags
-                "rating": whole_image_tags.rating,
-                "whole_general": whole_image_tags.general,
-                "whole_characters": whole_image_tags.characters,
-                # heads
-                "head_num": len(heads),
-                "head_general": [head.tags.general for head in heads],
-                "head_characters": [head.tags.characters for head in heads],
-                "head_coords": [
-                    [
-                        head.coords.left,
-                        head.coords.top,
-                        head.coords.right,
-                        head.coords.bottom,
-                    ]
-                    for head in heads
-                ],
-                # upper bodies
-                "upper_body_num": len(upper_bodies),
-                "upper_body_general": [ub.tags.general for ub in upper_bodies],
-                "upper_body_characters": [ub.tags.characters for ub in upper_bodies],
-                "upper_body_coords": [
-                    [
-                        ub.coords.left,
-                        ub.coords.top,
-                        ub.coords.right,
-                        ub.coords.bottom,
-                    ]
-                    for ub in upper_bodies
-                ],
-                # full bodies
-                "full_body_num": len(full_bodies),
-                "full_body_general": [fb.tags.general for fb in full_bodies],
-                "full_body_characters": [fb.tags.characters for fb in full_bodies],
-                "full_body_coords": [
-                    [
-                        fb.coords.left,
-                        fb.coords.top,
-                        fb.coords.right,
-                        fb.coords.bottom,
-                    ]
-                    for fb in full_bodies
-                ],
+                "group_ids": pair.same_group_ids,
             }
 
 
@@ -373,6 +366,9 @@ class KyaraDatasetConfig(AspectRatioBucketConfig):
     supported_extensions: list[str] = [".png", ".jpg", ".jpeg", ".webp", ".avif"]
     caption_extension: str = ".txt"
     metadata_extension: str = ".json"
+
+    # group info
+    group_parquet_path: str
 
     # reference image
     image_size: int = 448
@@ -389,44 +385,49 @@ class KyaraDatasetConfig(AspectRatioBucketConfig):
     # shuffle, setting prefix, dropping tags, etc.
     caption_processors: CaptionProcessorList = []
 
+    def get_image_file_by_id(self, id: str) -> Path | None:
+        directory = Path(self.folder)
+
+        for ext in self.supported_extensions:
+            file = directory / f"{id}{ext}"
+            if file.exists():
+                return file
+        return None
+
     def _retrive_images(self):
         pairs: list[KyaraImageCaptionPair] = []
 
-        for root, _, files in os.walk(self.folder):
-            for file in files:
-                file = Path(file)
-                if file.suffix in self.supported_extensions:
-                    image_path = Path(root) / file  # hogehoge.png
-                    caption_path = Path(root) / (
-                        file.stem + self.caption_extension
-                    )  # hogehoge.txt
-                    if not caption_path.exists():
-                        caption_path = None
+        lf = pl.scan_parquet(self.group_parquet_path)
 
-                    metadata_path = Path(root) / (file.stem + self.metadata_extension)
-                    if not metadata_path.exists():
-                        metadata_path = None
+        for row in lf.collect().iter_rows(named=True):
+            id: int = row["id"]
+            same_group_ids: list[int] = row["group"]
 
-                    width, height = imagesize.get(image_path)
-                    assert isinstance(width, int)
-                    assert isinstance(height, int)
+            image_path = self.get_image_file_by_id(str(id))  # 12345.webp
+            if image_path is None:
+                raise FileNotFoundError(f"Image file for id {id} not found.")
 
-                    if caption_path is not None or metadata_path is not None:
-                        pair = KyaraImageCaptionPair(
-                            image=image_path,
-                            width=width,
-                            height=height,
-                            caption=caption_path,
-                            metadata=metadata_path,
-                        )
-                        if pair.should_skip:
-                            continue
-                        pairs.append(pair)
-                    else:
-                        raise FileNotFoundError(
-                            f"Caption file {caption_path} or metadata file {metadata_path} \
-                            not found for image {image_path}"
-                        )
+            caption_path = None  # unused
+            metadata_path = image_path.with_suffix(
+                self.metadata_extension
+            )  # 12345.json
+            assert metadata_path.exists(), f"Metadata file {metadata_path} not found."
+
+            width, height = imagesize.get(image_path)
+            assert isinstance(width, int)
+            assert isinstance(height, int)
+
+            pair = KyaraImageCaptionPair(
+                image=image_path,
+                width=width,
+                height=height,
+                caption=caption_path,
+                metadata=metadata_path,
+                same_group_ids=[str(gid) for gid in same_group_ids],
+            )
+            if pair.should_skip:
+                continue
+            pairs.append(pair)
 
         return pairs
 
@@ -468,6 +469,7 @@ class KyaraDatasetConfig(AspectRatioBucketConfig):
                 do_upscale=self.do_upscale,
                 num_repeats=self.num_repeats,
                 caption_processors=self.caption_processors,
+                image_directory=Path(self.folder),
                 sampling_weights=DetectionSamplingWeights(
                     head=self.weight_head,
                     upper_body=self.weight_upper_body,
