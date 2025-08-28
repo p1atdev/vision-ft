@@ -213,7 +213,7 @@ class KyaraBucket(AspectRatioBucket):
         index: int,  # バッチ内のインデックス
         batch: dict[str, list[list[int]] | Sequence | torch.Tensor],
     ) -> tuple[
-        str, tuple[int, int, int, int] | None
+        str, str, tuple[int, int, int, int] | None
     ]:  # caption., choice, detection_index
         #
         id = batch["id"][index]  # type: ignore
@@ -274,7 +274,7 @@ class KyaraBucket(AspectRatioBucket):
             character=[],  # not to use character tags!
         )
 
-        return caption, coords
+        return group_id, caption, coords
 
     def __getitem__(self, idx: int | slice):
         # the __len__ is multiplied by num_repeats,
@@ -317,11 +317,15 @@ class KyaraBucket(AspectRatioBucket):
         detection_images: list[Image.Image] = []
         for i in range(batch_size):
             # バッチをループして、各サンプルのキャプションを準備する
-            caption, coords = self.prepare_caption(i, batch)
+            group_id, caption, coords = self.prepare_caption(i, batch)
             captions.append(caption)
 
+            # 選択した group_id の画像を読み込む
+            image_path = self.image_directory / f"{group_id}.webp"
+            assert image_path.exists(), f"Image file {image_path} not found."
+            image = Image.open(image_path).convert("RGB")
+
             # クロップをする
-            image = _pil_images[i].convert("RGB")
             if coords is not None:
                 # クロップできるならする
                 image = image.crop(coords)  # type: ignore
