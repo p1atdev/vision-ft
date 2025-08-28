@@ -171,6 +171,13 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             0, 2, 1, 3
         )  # (b, seq_len, num_heads, dim) -> (b, num_heads, seq_len, dim)
 
+        if mask is not None:
+            if len(mask.shape) == 2:
+                # (batch_size, context_seq_len) -> (batch_size, 1, 1, context_seq_len)
+                mask = mask[:, None, None, :]
+
+            mask = mask.bool()
+
         attn = scaled_dot_product_attention(
             query,
             key,
@@ -201,12 +208,13 @@ class IPAdapterCrossAttentionSDXL(Adapter):
         latents: torch.Tensor,
         context: torch.Tensor,  # encoder hidden states + ip tokens
         mask: torch.Tensor | None = None,
+        ip_tokens: torch.Tensor | None = None,
+        ip_mask: torch.Tensor | None = None,
         *args,
         **kwargs,
     ):
         # 1. separate text encoder_hiden_states and ip_tokens
-        text_hidden_states = context[:, : -self.num_ip_tokens, :]
-        ip_tokens = context[:, -self.num_ip_tokens :, :]
+        text_hidden_states = context
 
         # 2. attention latents and text features
         query = self.to_q(latents)
@@ -220,7 +228,9 @@ class IPAdapterCrossAttentionSDXL(Adapter):
             mask=mask,
         )
 
-        if not (self.skip_zero_tokens and torch.all(ip_tokens == 0)):
+        if ip_tokens is not None and not (
+            self.skip_zero_tokens and torch.all(ip_tokens == 0)
+        ):
             # 3. attention ip tokens
             ip_key = self.to_k_ip(ip_tokens)
             ip_value = self.to_v_ip(ip_tokens)
@@ -229,7 +239,7 @@ class IPAdapterCrossAttentionSDXL(Adapter):
                 query=query,
                 key=ip_key,
                 value=ip_value,
-                mask=None,
+                mask=ip_mask,
             )
             new_hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
@@ -941,12 +951,13 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
         latents: torch.Tensor,
         context: torch.Tensor,  # encoder hidden states + ip tokens
         mask: torch.Tensor | None = None,
+        ip_tokens: torch.Tensor | None = None,  # pre-extracted ip tokens
+        ip_mask: torch.Tensor | None = None,
         *args,
         **kwargs,
     ):
         # 1. separate text encoder_hiden_states and ip_tokens
-        text_hidden_states = context[:, : -self.num_ip_tokens, :]
-        ip_tokens = context[:, -self.num_ip_tokens :, :]
+        text_hidden_states = context
 
         # 2. attention latents and text features
         query = self.to_q(latents)
@@ -960,7 +971,9 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
             mask=mask,
         )
 
-        if not (self.skip_zero_tokens and torch.all(ip_tokens == 0)):
+        if ip_tokens is not None and not (
+            self.skip_zero_tokens and torch.all(ip_tokens == 0)
+        ):
             # 3. attention ip tokens
             ip_query = self.to_q_ip(latents)  # peft type layer uses ip-query
             ip_key = self.to_k_ip(ip_tokens)
@@ -970,7 +983,7 @@ class IPAdapterCrossAttentionPeftSDXL(IPAdapterCrossAttentionSDXL):
                 query=ip_query,
                 key=ip_key,
                 value=ip_value,
-                mask=None,
+                mask=ip_mask,
             )
             hidden_states = hidden_states + self.ip_scale * ip_hidden_states
 
@@ -1266,28 +1279,28 @@ class SDXLModelWithIPAdapter(SDXLModel):
                 reference_images,
                 prompt_embeddings,
             )
-            reference_embeddings = reference_embeddings.repeat_interleave(
+            ip_tokens = reference_embeddings.repeat_interleave(
                 repeats=num_prompts,
                 dim=0,  # batch
             )
-
-            prompt_embeddings = torch.cat(
-                [prompt_embeddings, reference_embeddings],
-                dim=1,  # seq_len
+            ip_attn_mask = torch.ones(  # ones -> attend all
+                (ip_tokens.size(0), ip_tokens.size(1)),
+                device=ip_tokens.device,
             )
+
             if do_offloading:
                 self.image_proj.to("cpu")
                 torch.cuda.empty_cache()
         else:
             # create zero embeddings
             _, _seq_len, dim = prompt_embeddings.size()
-            reference_embeddings = torch.zeros(
+            ip_tokens = torch.zeros(
                 (batch_size, self.manager.adapter_config.num_ip_tokens, dim),
                 device=execution_device,
             )
-            prompt_embeddings = torch.cat(
-                [prompt_embeddings, reference_embeddings],
-                dim=1,  # seq_len
+            ip_attn_mask = torch.zeros(  # zeros -> attend none
+                (batch_size, self.manager.adapter_config.num_ip_tokens),
+                device=execution_device,
             )
 
         # 3. Prepare latents, etc.
@@ -1328,6 +1341,10 @@ class SDXLModelWithIPAdapter(SDXLModel):
                     original_size=original_size_tensor,
                     target_size=target_size_tensor,
                     crop_coords_top_left=crop_coords_tensor,
+                    cross_attention_kwargs={
+                        "ip_tokens": ip_tokens,
+                        "ip_mask": ip_attn_mask,
+                    },
                 )
 
                 # perform cfg

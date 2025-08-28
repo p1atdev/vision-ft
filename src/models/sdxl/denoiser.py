@@ -256,6 +256,7 @@ class TransformerBlock(nn.Module):
         hidden_states: torch.Tensor,
         context: torch.Tensor,
         time_embedding: torch.Tensor,
+        cross_attention_kwargs: dict | None = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
@@ -270,6 +271,7 @@ class TransformerBlock(nn.Module):
             context=context,
             # ↓ not always used. only used when using AdaLN-Zero IP-Adapter
             time_embedding=time_embedding,
+            **(cross_attention_kwargs or {}),
         )
 
         # 3. feed forward
@@ -321,6 +323,7 @@ class SpatialTransformer(nn.Module):
         context: torch.Tensor | None = None,
         time_embedding: torch.Tensor | None = None,
         transformer_args: dict | None = {},
+        cross_attention_kwargs: dict | None = None,
     ) -> torch.Tensor:
         batch_size, num_channels, height, width = hidden_states.shape
 
@@ -346,6 +349,7 @@ class SpatialTransformer(nn.Module):
                 hidden_states,
                 context=context,
                 time_embedding=time_embedding,
+                cross_attention_kwargs=cross_attention_kwargs,
                 **transformer_args,
             )
         hidden_states = self.proj_out(hidden_states)
@@ -724,6 +728,7 @@ class DownBlocks(nn.Module):
         global_embedding: torch.Tensor,
         time_embedding: torch.Tensor,
         transformer_args: dict | None = {},
+        cross_attention_kwargs: dict | None = {},
     ) -> DownBlocksOutput:
         skip_connections: list[torch.Tensor] = []
 
@@ -746,6 +751,7 @@ class DownBlocks(nn.Module):
                         context,
                         time_embedding,
                         transformer_args,
+                        cross_attention_kwargs,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Downsample):
@@ -825,6 +831,7 @@ class MidBlock(nn.Module):
         global_embedding: torch.Tensor,
         time_embedding: torch.Tensor,
         transformer_args: dict | None = {},
+        cross_attention_kwargs: dict | None = {},
     ) -> torch.Tensor:
         for layer in self.blocks:
             if isinstance(layer, ResidualBlock):
@@ -841,6 +848,7 @@ class MidBlock(nn.Module):
                     context,
                     time_embedding,
                     transformer_args,
+                    cross_attention_kwargs,
                     gradient_checkpointing=self.gradient_checkpointing,
                 )
             else:
@@ -954,6 +962,7 @@ class UpBlocks(nn.Module):
         time_embedding: torch.Tensor,
         skip_connections: list[torch.Tensor],
         transformer_args: dict | None = {},
+        cross_attention_kwargs: dict | None = {},
     ) -> torch.Tensor:
         for layer_list in self.blocks:
             if not isinstance(layer_list, nn.ModuleList):
@@ -977,6 +986,7 @@ class UpBlocks(nn.Module):
                         context,
                         time_embedding,
                         transformer_args,
+                        cross_attention_kwargs,
                         gradient_checkpointing=self.gradient_checkpointing,
                     )
                 elif isinstance(layer, Upsample):
@@ -1176,6 +1186,7 @@ class UNet(nn.Module):
         original_size: torch.Tensor,  # (batch_size, 2)
         target_size: torch.Tensor,  # (batch_size, 2)
         crop_coords_top_left: torch.Tensor,  # (batch_size, 2)
+        cross_attention_kwargs: dict | None = None,
     ) -> torch.Tensor:
         # 1. global condition embedding
         # global condition embedding, including timestep and image sizes
@@ -1194,6 +1205,7 @@ class UNet(nn.Module):
             context=encoder_hidden_states,
             global_embedding=global_cond,
             time_embedding=time_embed,
+            cross_attention_kwargs=cross_attention_kwargs,
         )
 
         # 3. middle blocks
@@ -1202,6 +1214,7 @@ class UNet(nn.Module):
             context=encoder_hidden_states,
             global_embedding=global_cond,
             time_embedding=time_embed,
+            cross_attention_kwargs=cross_attention_kwargs,
         )
 
         # 4. up blocks
@@ -1211,6 +1224,7 @@ class UNet(nn.Module):
             global_embedding=global_cond,
             time_embedding=time_embed,
             skip_connections=skip_connections,
+            cross_attention_kwargs=cross_attention_kwargs,
         )
 
         # 5. output
