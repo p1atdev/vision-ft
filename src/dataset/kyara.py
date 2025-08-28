@@ -176,6 +176,37 @@ class KyaraBucket(AspectRatioBucket):
             original_width=image.shape[2],
         )
 
+    def choice_detection(
+        self,
+        detections: KyaraDetections,
+        weights: list[float],
+        choices: list[str] = ["head", "upper_body", "full_body"],
+    ) -> Detection:
+        choice = random.choices(choices, weights=weights, k=1)[0]
+
+        if choice == "head":
+            if len(detections.heads) > 0:
+                return random.choice(detections.heads)
+        elif choice == "upper_body":
+            if len(detections.upper_bodies) > 0:
+                return random.choice(detections.upper_bodies)
+        elif choice == "full_body":
+            if len(detections.full_bodies) > 0:
+                return random.choice(detections.full_bodies)
+
+        # どれもなければ、今回の選択肢をのぞいてもう一回
+        remaining_choices = []
+        remaining_weights = []
+        for c, w in zip(choices, weights):
+            if c != choice:
+                remaining_choices.append(c)
+                remaining_weights.append(w)
+
+        if len(remaining_choices) == 0:
+            raise ValueError("No detections available.")
+
+        return self.choice_detection(detections, remaining_weights, remaining_choices)
+
     def prepare_caption(
         self,
         index: int,  # バッチ内のインデックス
@@ -203,19 +234,9 @@ class KyaraBucket(AspectRatioBucket):
             self.sampling_weights.upper_body,
             self.sampling_weights.full_body,
         ]
-        choice = random.choices(choices, weights=weights, k=1)[0]
 
         # choice に従って ref detections からタグと座標を取得する
-        detection = None
-        if choice == "head":
-            detection = random.choice(ref_detections.heads)
-        elif choice == "upper_body":
-            detection = random.choice(ref_detections.upper_bodies)
-        elif choice == "full_body":
-            detection = random.choice(ref_detections.full_bodies)
-        else:
-            raise ValueError(f"Invalid choice: {choice}")
-        assert detection is not None
+        detection = self.choice_detection(ref_detections, weights, choices)
 
         # ref のタグと座標
         general = detection.tags.general
