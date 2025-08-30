@@ -22,7 +22,7 @@ from src.modules.loss.diffusion import (
     loss_with_predicted_noise,
 )
 from src.modules.timestep.sampling import uniform_randint, gaussian_randint
-from src.utils.tensor import remove_orig_mod_prefix
+from src.utils.tensor import remove_orig_mod_prefix, tensor_to_images
 from src.utils.logging import wandb_image
 
 

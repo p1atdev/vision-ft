@@ -247,7 +247,7 @@ class KyaraBucket(AspectRatioBucket):
             if detection is not None
             else ref_detections.whole_image_tags.general
         )
-        # characters = detection.tags.characters
+        # PIL style crop coords
         coords = (
             (
                 detection.coords.left,
@@ -328,6 +328,7 @@ class KyaraBucket(AspectRatioBucket):
             # クロップをする
             if coords is not None:
                 # クロップできるならする
+                print("image size", image.size, "coords", coords)
                 image = image.crop(coords)  # type: ignore
 
             # normalize

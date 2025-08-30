@@ -2,6 +2,7 @@ from PIL import Image
 from typing import Literal
 import click
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.transforms.v2 as v2
@@ -35,6 +36,10 @@ class SDXLModelWithIPAdapterTrainingConfig(SDXLModelWithIPAdapterConfig):
 
     timestep_sampling: Literal["uniform", "gaussian"] = "uniform"
     timestep_sampling_args: dict = {}
+
+    token_tail_drop: bool = False
+    token_tail_drop_rate: float = 0.5
+    token_tail_drop_sampling: Literal["uniform"] = "uniform"
 
 
 class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
@@ -173,14 +178,22 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
         # drop ip tokens randomly for cfg
         ip_tokens[drop_image] = 0
 
-        # cat with seq len to pass through the model
-        encoder_hidden_states = torch.cat(
-            [
-                encoder_hidden_states,
-                ip_tokens,
-            ],
-            dim=1,  # seq len
-        )
+        # tail drop
+        ip_attn_mask = None
+        if self.model_config.token_tail_drop:
+            if np.random.rand() < self.model_config.token_tail_drop_rate:
+                # drop the tail
+                tokens_to_keep = np.random.randint(
+                    low=1,
+                    high=self.model_config.adapter.num_ip_tokens + 1,
+                )
+                ip_tokens = ip_tokens[:, :tokens_to_keep, :]
+                ip_attn_mask = torch.zeros(
+                    (ip_tokens.size(0), ip_tokens.size(1)),
+                    device=ip_tokens.device,
+                    dtype=torch.bool,
+                )
+                ip_attn_mask[:, :tokens_to_keep] = True  # 0.0: masked, 1.0: attended
 
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_noised_latents(
@@ -197,6 +210,10 @@ class SDXLIPAdapterTraining(ModelForTraining, nn.Module):
             original_size=original_size,
             target_size=target_size,
             crop_coords_top_left=crop_coords_top_left,
+            cross_attention_kwargs={
+                "ip_tokens": ip_tokens,
+                "ip_mask": ip_attn_mask,
+            },
         )
 
         # 4. Calculate the loss
