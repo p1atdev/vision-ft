@@ -37,7 +37,7 @@ def format_general_character_tags(
 
     # Animagine-like
     rating_tags = []
-    if rating in ["explicit", "questionable"]:
+    if rating in ["explicit", "e", "questionable", "q"]:
         rating_tags.append("nsfw")
 
         if rating in ["explicit", "e"]:
@@ -56,3 +56,38 @@ def format_general_character_tags(
             if part.strip() != ""  # skip empty parts
         ]
     )
+
+
+KAOMOJI = [
+    ">_<",
+    ">_o",
+    "0_0",
+    "o_o",
+    "3_3",
+    "6_9",
+    "@_@",
+    "u_u",
+    "x_x",
+    "^_^",
+    "|_|",
+    "=_=",
+    "+_+",
+    "+_-",
+    "._.",
+    "<o>_<o>",
+    "<|>_<|>",
+    # ↓ deprecated
+    "||_||",
+    "(o)_(o)",
+]
+
+
+def replace_underscore(tag: str) -> str:
+    if tag in KAOMOJI:
+        return tag
+
+    return tag.replace("_", " ")
+
+
+def map_replace_underscore(tags: list[str]) -> list[str]:
+    return [replace_underscore(tag) for tag in tags]

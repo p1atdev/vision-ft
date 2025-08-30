@@ -128,13 +128,10 @@ class Trainer:
         # )
         if (preview_config := self.config.preview) is not None:
             self.print("Preview config found. Preparing preview dataloader...")
-            preview_dataloader = get_dataloader_for_preview(
+            self.preview_dataloader = get_dataloader_for_preview(
                 preview_config.data.get_dataset(),
                 # TODO: other args
-            )
-            self.preview_dataloader = self.accelerator.prepare_data_loader(
-                preview_dataloader
-            )
+            )  # not to be accelerated for preview
 
     def prepare_saving_strategy(self):
         if (saving := self.config.saving) is not None:

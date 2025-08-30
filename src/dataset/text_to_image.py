@@ -30,7 +30,7 @@ from .aspect_ratio_bucket import (
     print_arb_info,
 )
 from .caption import CaptionProcessorList
-from .tags import format_general_character_tags
+from .tags import format_general_character_tags, map_replace_underscore
 
 
 class ImageCaptionPair(BaseModel):
@@ -46,7 +46,18 @@ class ImageCaptionPair(BaseModel):
                 metadata = json.load(f)
 
             if "tag_string" in metadata:
-                return metadata["tag_string"].replace(" ", ", ").replace("_", " ")
+                return format_general_character_tags(
+                    general=map_replace_underscore(
+                        metadata.get("tag_string_general", "").split(" ")
+                    ),
+                    character=map_replace_underscore(
+                        metadata.get("tag_string_copyright", "").split(" ")
+                        + metadata.get("tag_string_character", "").split(" ")
+                    ),
+                    rating=metadata.get("rating", "general"),
+                    separator=", ",
+                    group_separator="|||",
+                )
 
             # wd-tagger-rs format
             if "tagger" in metadata:
