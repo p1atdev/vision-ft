@@ -344,9 +344,12 @@ class ImageTextProjector(nn.Module):
         )
 
         # proj in
-        nn.init.normal_(self.proj_in.weight, mean=0.0, std=0.02)
-        if self.proj_in.bias is not None:
-            nn.init.zeros_(self.proj_in.bias)
+        nn.init.normal_(self.image_proj_in.weight, mean=0.0, std=0.02)
+        if self.image_proj_in.bias is not None:
+            nn.init.zeros_(self.image_proj_in.bias)
+        nn.init.normal_(self.text_proj_in.weight, mean=0.0, std=0.02)
+        if self.text_proj_in.bias is not None:
+            nn.init.zeros_(self.text_proj_in.bias)
 
         # proj out
         nn.init.normal_(self.proj_out.weight, mean=0.0, std=0.02)
