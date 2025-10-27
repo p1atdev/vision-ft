@@ -75,9 +75,11 @@ class TextEncoder(nn.Module):
     ):
         # sometimes "shared.weight" is missing from the state_dict
         shared_weight_key = "model.shared.weight"
+        embed_tokens_key = "model.encoder.embed_tokens.weight"
         if shared_weight_key not in state_dict:
-            reference_key = "model.encoder.embed_tokens.weight"
-            state_dict[shared_weight_key] = state_dict[reference_key]
+            state_dict[shared_weight_key] = state_dict[embed_tokens_key]
+        elif embed_tokens_key not in state_dict:
+            state_dict[embed_tokens_key] = state_dict[shared_weight_key]
 
         return super()._load_from_state_dict(
             state_dict,
