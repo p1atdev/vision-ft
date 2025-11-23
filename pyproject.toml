@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "torch>=2.5,<2.6",
+    "torch>=2.5,<2.7",
     "torchvision>=0.20",
     "safetensors>=0.4.5",
     "hf-transfer>=0.1.8",
@@ -25,7 +25,7 @@ dependencies = [
     "imagesize>=1.4.1",
     "cheesechaser>=0.2.2",
     "polars>=1.23.0",
-    "huggingface-hub[hf-xet]>=0.29.1",
+    "huggingface-hub>=0.29.1",
     "einops>=0.8.1",
     "timm>=1.0.15",
     "hf-xet>=1.0.3",
@@ -60,9 +60,9 @@ requires-dist = ["setuptools", "wheel"]
 
 [project.optional-dependencies]
 build = ["setuptools", "wheel"]
-compile = ["schedulefree", "diffusers"]
+compile = ["schedulefree", "diffusers<=0.36.0"]
 flash-attn = ["flash-attn<2.8.0"]
-quanto = ["optimum-quanto"]             # to avoid Zero GPU issues
+quanto = ["optimum-quanto"]                     # to avoid Zero GPU issues
 triton = ["triton"]
 xformers = ["xformers"]
 
@@ -79,7 +79,6 @@ torchvision = [
     { index = "pytorch-cu124", marker = "platform_system != 'Darwin'" },
 ]
 huggingface-dl = { git = "https://github.com/p1atdev/huggingface_dl" }
-diffusers = { git = "https://github.com/huggingface/diffusers" }
 comfyui = { git = "https://github.com/p1atdev/ComfyUI", rev = "lib" }
 
 [[tool.uv.index]]
