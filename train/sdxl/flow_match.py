@@ -2,26 +2,47 @@ from PIL import Image
 import click
 
 import torch
-import torch.nn as nn
 
 from accelerate import init_empty_weights
 
 from src.models.sdxl import SDXLModel
+from src.models.sdxl.config import SDXLFlowMatchConfig
 from src.trainer.common import Trainer
 from src.config import TrainConfig
 from src.dataset.text_to_image import TextToImageDatasetConfig
 from src.dataset.preview.text_to_image import TextToImagePreviewConfig
 from src.modules.loss.flow_match import (
-    prepare_noised_latents,
+    prepare_scaled_noised_latents,
     loss_with_predicted_velocity,
+    loss_with_predicted_image,
+    convert_x0_to_velocity,
+    ModelPredictionType,
 )
 from src.modules.timestep.scheduler import get_linear_schedule
-from src.modules.timestep.sampling import shift_sigmoid_randn
+from src.modules.timestep.sampling import TimestepSamplingType, sample_timestep
 
 from text_to_image import SDXLForTextToImageTraining
 
 
+class SDXLForFlowMatchingTrainingConfig(SDXLFlowMatchConfig):
+    max_token_length: int = 225  # 75 * 3
+
+    model_prediction: ModelPredictionType = "velocity"
+    # loss always uses velocity
+
+    noise_scale: float = 1.0
+
+    timestep_sampling: TimestepSamplingType = "shift_sigmoid"
+    timestep_std: float = 0.8
+    timestep_mean: float = -0.8
+
+
 class SDXLFlowMatch(SDXLModel):
+    config: SDXLFlowMatchConfig
+
+    def __init__(self, config: SDXLFlowMatchConfig):
+        super().__init__(config)
+
     def prepare_timesteps(
         self,
         num_inference_steps: int,
@@ -92,15 +113,19 @@ class SDXLFlowMatch(SDXLModel):
         # 3. Prepare latents, etc.
         if do_offloading:
             self.denoiser.to(execution_device)
-        latents = self.prepare_latents(
-            batch_size,
-            height,
-            width,
-            execution_dtype,
-            execution_device,
-            max_noise_sigma=1.0,
-            seed=seed,
+        latents = (
+            self.prepare_latents(
+                batch_size,
+                height,
+                width,
+                execution_dtype,
+                execution_device,
+                max_noise_sigma=1.0,
+                seed=seed,
+            )
+            * self.config.noise_scale
         )
+
         prompt_embeddings, pooled_prompt_embeddings = (
             self.prepare_encoder_hidden_states(
                 encoder_output=encoder_output,
@@ -125,7 +150,7 @@ class SDXLFlowMatch(SDXLModel):
                 )
 
                 # predict noise model_output
-                velocity_pred = self.denoiser(
+                model_pred = self.denoiser(
                     latents=latent_model_input,
                     timestep=batch_timestep,
                     encoder_hidden_states=prompt_embeddings,
@@ -134,6 +159,14 @@ class SDXLFlowMatch(SDXLModel):
                     target_size=target_size_tensor,
                     crop_coords_top_left=crop_coords_tensor,
                 )
+                if self.config.model_prediction == "real_image":
+                    # convert x0 to velocity
+                    model_pred = convert_x0_to_velocity(
+                        x0=model_pred,
+                        noisy_latents=latent_model_input,
+                        timestep=batch_timestep,
+                    )
+                velocity_pred = model_pred
 
                 # perform cfg
                 if do_cfg:
@@ -168,6 +201,9 @@ class SDXLFlowMatch(SDXLModel):
 class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
     model: SDXLFlowMatch
 
+    model_config: SDXLForFlowMatchingTrainingConfig
+    model_config_class = SDXLForFlowMatchingTrainingConfig
+
     def setup_model(self):
         with init_empty_weights():
             self.model = SDXLFlowMatch(self.model_config)
@@ -177,6 +213,33 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
             self.model.vae.eval()  # type: ignore
 
         self.model._from_checkpoint()  # load!
+
+    def treat_loss(
+        self,
+        model_pred: torch.Tensor,
+        latents: torch.Tensor,
+        random_noise: torch.Tensor,
+        noisy_latents: torch.Tensor,
+        timestep: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.model_config.model_prediction == "velocity":
+            return loss_with_predicted_velocity(
+                latents=latents,
+                random_noise=random_noise,
+                predicted_velocity=model_pred,
+            )
+        elif self.model_config.model_prediction == "image":
+            return loss_with_predicted_image(
+                latents=latents,
+                noisy_latents=noisy_latents,
+                timestep=timestep,
+                predicted_image=model_pred,
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown model_prediction: {self.model_config.model_prediction}"
+            )
 
     def train_step(self, batch: dict) -> torch.Tensor:
         pixel_values = batch["image"]
@@ -197,22 +260,27 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
             )
 
             latents = self.model.encode_image(pixel_values)
-            timesteps = shift_sigmoid_randn(
+            timesteps = sample_timestep(
                 latents_shape=latents.shape,
                 device=self.accelerator.device,
-                discrete_flow_shift=3.1825,
+                # jit sampling
+                std=self.model_config.timestep_std,
+                mean=self.model_config.timestep_mean,
+                # if we use flux shifted sigmoid:
+                sampling_type=self.model_config.timestep_sampling,
+                shift=3.1825,
                 sigmoid_scale=1,
             )
 
         # 2. Prepare the noised latents
-        noisy_latents, random_noise = prepare_noised_latents(
+        noisy_latents, random_noise = prepare_scaled_noised_latents(
             latents=latents,
             timestep=timesteps,
-            max_sigma=1.0,
+            noise_scale=self.model_config.noise_scale,
         )
 
         # 3. Predict the noise
-        velocity_pred = self.model(
+        model_pred = self.model(
             latents=noisy_latents,
             timestep=timesteps,
             encoder_hidden_states=encoder_hidden_states,
@@ -223,10 +291,12 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
         )
 
         # 4. Calculate the loss
-        l2_loss = loss_with_predicted_velocity(
+        l2_loss = self.treat_loss(
+            model_pred=model_pred,
             latents=latents,
             random_noise=random_noise,
-            predicted_velocity=velocity_pred,
+            noisy_latents=noisy_latents,
+            timestep=timesteps,
         )
         total_loss = l2_loss
 

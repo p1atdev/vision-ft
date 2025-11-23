@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Literal
 
 import torch
 import torch.nn.functional as F
@@ -57,6 +57,19 @@ def prepare_noised_latents(
     return NoisedLatents(noisy_latents, random_noise)
 
 
+def prepare_scaled_noised_latents(
+    latents: torch.Tensor,
+    timestep: torch.Tensor,
+    noise_scale: float = 1.0,
+):
+    noise = torch.randn_like(latents) * noise_scale
+
+    timestep = timestep.view([latents.size(0), *([1] * len(latents.shape[1:]))])
+    noisy_latents = timestep * latents + (1 - timestep) * noise
+
+    return NoisedLatents(noisy_latents, noise)
+
+
 def get_flow_match_target_velocity(
     latents: torch.Tensor,
     random_noise: torch.Tensor,
@@ -73,6 +86,52 @@ def loss_with_predicted_velocity(
     loss = F.mse_loss(
         predicted_velocity,
         random_noise - latents,  # added noise
+        reduction="mean",
+    )
+
+    return loss
+
+
+ModelPredictionType = Literal["noise", "velocity", "image"]  # eps, v, x0
+
+
+# ref: https://github.com/LTH14/JiT/blob/869190a33f59271724cd1bfddd85777501dadf03/denoiser.py#L59
+def convert_x0_to_velocity(
+    x0: torch.Tensor,
+    noisy_latents: torch.Tensor,
+    timestep: torch.Tensor,
+    eps: float = 1e-5,
+) -> torch.Tensor:
+    timestep = timestep.view([x0.size(0), *([1] * len(x0.shape[1:]))])
+    velocity = (x0 - noisy_latents) / (1 - timestep).clamp_min(eps)
+
+    return velocity
+
+
+def loss_with_predicted_image(
+    latents: torch.Tensor,
+    noisy_latents: torch.Tensor,
+    # https://github.com/LTH14/JiT/issues/12#issuecomment-3558304971
+    # we don't know the actual noise during inference,
+    # so not to use real random_noise here
+    # random_noise: torch.Tensor,
+    timestep: torch.Tensor,
+    predicted_image: torch.Tensor,
+) -> torch.Tensor:
+    target_v = convert_x0_to_velocity(
+        x0=latents,
+        noisy_latents=noisy_latents,
+        timestep=timestep,
+    )
+    v_pred = convert_x0_to_velocity(
+        x0=predicted_image,
+        noisy_latents=noisy_latents,
+        timestep=timestep,
+    )
+
+    loss = F.mse_loss(
+        v_pred,
+        target_v,
         reduction="mean",
     )
 

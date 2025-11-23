@@ -6,7 +6,7 @@ import torch
 
 from ...utils.dtype import str_to_dtype
 from ...modules.attention import AttentionImplementation
-
+from ...modules.loss.flow_match import ModelPredictionType
 
 DOWN_BLOCK_NAME = Literal[
     "DownBlock2D",
@@ -72,3 +72,8 @@ class SDXLConfig(BaseModel):
 
     def get_dtype(self) -> torch.dtype:
         return str_to_dtype(self.dtype)
+
+
+class SDXLFlowMatchConfig(SDXLConfig):
+    model_prediction: ModelPredictionType = "velocity"
+    noise_scale: float = 1.0

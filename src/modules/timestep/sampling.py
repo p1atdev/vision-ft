@@ -162,7 +162,9 @@ def shift_fraction_uniform_rand(
     return timesteps
 
 
-TimestepSamplingType = Literal["shift_sigmoid", "flux_shift", "sigmoid", "uniform"]
+TimestepSamplingType = Literal[
+    "shift_sigmoid", "flux_shift", "sigmoid", "uniform", "scale_shift_sigmoid"
+]
 
 
 def sample_timestep(
@@ -179,6 +181,8 @@ def sample_timestep(
         return sigmoid_randn(latents_shape, device, **kwargs)
     elif sampling_type == "uniform":
         return uniform_rand(latents_shape, device)
+    elif sampling_type == "scale_shift_sigmoid":
+        return scale_shift_sigmoid_randn(latents_shape, device, **kwargs)
     else:
         raise ValueError(f"Invalid sampling type: {sampling_type}")
 
@@ -247,5 +251,22 @@ def sigmoid_randint(
     timesteps = timesteps.round().long()
 
     assert isinstance(timesteps, torch.LongTensor), "timesteps is not a LongTensor"
+
+    return timesteps
+
+
+# https://github.com/LTH14/JiT/blob/869190a33f59271724cd1bfddd85777501dadf03/denoiser.py#L45-L47
+def scale_shift_sigmoid_randn(
+    latents_shape: torch.Size,
+    device: torch.device,
+    std: float = 0.8,
+    mean: float = -0.8,
+    **kwargs,
+) -> torch.Tensor:
+    batch_size = latents_shape[0]
+
+    norm_rand = torch.randn(batch_size, device=device)
+    sigmoid_scaled = norm_rand * std + mean
+    timesteps = sigmoid_scaled.sigmoid()
 
     return timesteps
