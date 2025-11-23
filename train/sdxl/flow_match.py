@@ -89,22 +89,25 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
             )
 
             latents = self.model.encode_image(pixel_values)
-            timesteps = sample_timestep(
-                latents_shape=latents.shape,
-                device=self.accelerator.device,
-                # jit sampling
-                std=self.model_config.timestep_std,
-                mean=self.model_config.timestep_mean,
-                # if we use flux shifted sigmoid:
-                sampling_type=self.model_config.timestep_sampling,
-                shift=3.1825,
-                sigmoid_scale=1,
+            timesteps = (
+                sample_timestep(
+                    latents_shape=latents.shape,
+                    device=self.accelerator.device,
+                    # jit sampling
+                    std=self.model_config.timestep_std,
+                    mean=self.model_config.timestep_mean,
+                    # if we use flux shifted sigmoid:
+                    sampling_type=self.model_config.timestep_sampling,
+                    shift=3.1825,
+                    sigmoid_scale=1,
+                )
+                * 1000  # 0~1000
             )
 
         # 2. Prepare the noised latents
         noisy_latents, random_noise = prepare_scaled_noised_latents(
             latents=latents,
-            timestep=timesteps,
+            timestep=timesteps / 1000,  # 0.0~1.0
             noise_scale=self.model_config.noise_scale,
         )
 
@@ -125,7 +128,7 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
             latents=latents,
             random_noise=random_noise,
             noisy_latents=noisy_latents,
-            timestep=timesteps,
+            timestep=timesteps / 1000,  # 0.0~1.0
         )
         total_loss = l2_loss
 
