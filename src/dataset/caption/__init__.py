@@ -7,6 +7,7 @@ from .append import (
     CaptionRandomSuffix,
 )
 from .drop import CaptionDrop, CaptionTagDrop
+from .replace import CaptionReplace
 
 CaptionProcessorList = list[
     CaptionPassthrough
@@ -18,4 +19,5 @@ CaptionProcessorList = list[
     | CaptionShuffleInGroup
     | CaptionDrop
     | CaptionTagDrop
+    | CaptionReplace
 ]
