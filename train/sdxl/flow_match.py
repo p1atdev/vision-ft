@@ -1,6 +1,7 @@
 import click
 
 import torch
+import torch.nn.functional as F
 
 from accelerate import init_empty_weights
 
@@ -12,7 +13,8 @@ from src.dataset.preview.text_to_image import TextToImagePreviewConfig
 from src.modules.loss.flow_match import (
     prepare_scaled_noised_latents,
     loss_with_predicted_velocity,
-    loss_with_predicted_image,
+    convert_x0_to_velocity,
+    ModelPredictionType,
 )
 from src.modules.timestep.sampling import TimestepSamplingType, sample_timestep
 
@@ -21,6 +23,8 @@ from text_to_image import SDXLForTextToImageTraining
 
 class SDXLForFlowMatchingTrainingConfig(SDXLFlowMatchConfig):
     max_token_length: int = 225  # 75 * 3
+
+    loss_type: ModelPredictionType = "velocity"
 
     timestep_sampling: TimestepSamplingType = "scale_shift_sigmoid"
     timestep_std: float = 0.8
@@ -46,26 +50,56 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
     def treat_loss(
         self,
         model_pred: torch.Tensor,
-        latents: torch.Tensor,
+        latents: torch.Tensor,  # clean
         random_noise: torch.Tensor,
         noisy_latents: torch.Tensor,
         timestep: torch.Tensor,
     ) -> torch.Tensor:
         if self.model_config.model_prediction == "velocity":
-            return loss_with_predicted_velocity(
-                latents=latents,
-                random_noise=random_noise,
-                predicted_velocity=model_pred,
-            )
+            if self.model_config.loss_type == "velocity":
+                return loss_with_predicted_velocity(
+                    latents=latents,
+                    random_noise=random_noise,
+                    predicted_velocity=model_pred,
+                )
+            else:
+                raise NotImplementedError(
+                    f"loss_type {self.model_config.loss_type} not implemented for velocity prediction"
+                )
         elif self.model_config.model_prediction == "image":
-            return loss_with_predicted_image(
-                latents=latents,
-                noisy_latents=noisy_latents,
-                timestep=timestep,
-                predicted_image=model_pred,
-                timestep_eps=self.model_config.timestep_eps,
-                clean_at_zero=self.model_config.clean_at_zero,
-            )
+            if self.model_config.loss_type == "velocity":
+                target_v = convert_x0_to_velocity(
+                    x0=latents,
+                    noisy_latents=noisy_latents,
+                    timestep=timestep,
+                    eps=self.model_config.timestep_eps,
+                    clean_at_zero=self.model_config.clean_at_zero,
+                )
+                v_pred = convert_x0_to_velocity(
+                    x0=model_pred,
+                    noisy_latents=noisy_latents,
+                    timestep=timestep,
+                    eps=self.model_config.timestep_eps,
+                    clean_at_zero=self.model_config.clean_at_zero,
+                )
+
+                return F.mse_loss(
+                    v_pred,
+                    target_v,
+                    reduction="mean",
+                )
+            elif self.model_config.loss_type == "image":
+                return F.mse_loss(
+                    model_pred,
+                    # clean latents is inference tensor
+                    # so we need to clone
+                    latents.clone().detach(),
+                    reduction="mean",
+                )
+            else:
+                raise NotImplementedError(
+                    f"loss_type {self.model_config.loss_type} not implemented for image prediction"
+                )
 
         else:
             raise ValueError(

@@ -114,39 +114,3 @@ def convert_x0_to_velocity(
         velocity = (x0 - noisy_latents) / (1 - timestep).clamp_min(eps)
 
     return velocity
-
-
-def loss_with_predicted_image(
-    latents: torch.Tensor,
-    noisy_latents: torch.Tensor,
-    # https://github.com/LTH14/JiT/issues/12#issuecomment-3558304971
-    # we don't know the actual noise during inference,
-    # so not to use real random_noise here
-    # random_noise: torch.Tensor,
-    timestep: torch.Tensor,
-    predicted_image: torch.Tensor,
-    timestep_eps: float = 1e-5,
-    clean_at_zero: bool = False,
-) -> torch.Tensor:
-    target_v = convert_x0_to_velocity(
-        x0=latents,
-        noisy_latents=noisy_latents,
-        timestep=timestep,
-        eps=timestep_eps,
-        clean_at_zero=clean_at_zero,
-    )
-    v_pred = convert_x0_to_velocity(
-        x0=predicted_image,
-        noisy_latents=noisy_latents,
-        timestep=timestep,
-        eps=timestep_eps,
-        clean_at_zero=clean_at_zero,
-    )
-
-    loss = F.mse_loss(
-        v_pred,
-        target_v,
-        reduction="mean",
-    )
-
-    return loss
