@@ -63,6 +63,8 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
                 noisy_latents=noisy_latents,
                 timestep=timestep,
                 predicted_image=model_pred,
+                timestep_eps=self.model_config.timestep_eps,
+                clean_at_zero=self.model_config.clean_at_zero,
             )
 
         else:
@@ -109,6 +111,7 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
             latents=latents,
             timestep=timesteps / 1000,  # 0.0~1.0
             noise_scale=self.model_config.noise_scale,
+            clean_at_zero=self.model_config.clean_at_zero,
         )
 
         # 3. Predict the noise

@@ -5,7 +5,6 @@ from ....modules.loss.flow_match import (
     convert_x0_to_velocity,
     ModelPredictionType,
 )
-from ....modules.timestep.scheduler import get_linear_schedule
 
 
 from ..config import SDXLConfig
@@ -15,6 +14,9 @@ from ..pipeline import SDXLModel
 class SDXLFlowMatchConfig(SDXLConfig):
     model_prediction: ModelPredictionType = "velocity"
     noise_scale: float = 1.0
+
+    clean_at_zero: bool = False
+    timestep_eps: float = 1e-5
 
 
 class SDXLFlowMatch(SDXLModel):
@@ -29,15 +31,12 @@ class SDXLFlowMatch(SDXLModel):
         device: torch.device,
     ):
         # timesteps = torch.linspace(0.0, 1.0, num_inference_steps + 1, device=device)
-        timesteps = (
-            torch.linspace(
-                1000.0,
-                1.0,
-                num_inference_steps,
-                device=device,
-            )
-            .to(torch.int64)
-            .to(torch.float32)
+        timesteps = torch.linspace(
+            1000.0,
+            1.0,
+            num_inference_steps,
+            device=device,
+            dtype=torch.float32,
         )
         sigmas = timesteps / 1000.0
         sigmas = torch.cat(
@@ -87,6 +86,7 @@ class SDXLFlowMatch(SDXLModel):
             prompt,
             negative_prompt,
             use_negative_prompts=do_cfg,
+            max_token_length=max_token_length,
         )
         if do_offloading:
             self.text_encoder.to("cpu")
@@ -147,6 +147,8 @@ class SDXLFlowMatch(SDXLModel):
                         x0=model_pred,
                         noisy_latents=latent_model_input,
                         timestep=batch_timestep / 1000,  # 0~1000 -> 0.0~1.0
+                        clean_at_zero=self.config.clean_at_zero,
+                        eps=self.config.timestep_eps,
                     )
                 elif self.config.model_prediction == "velocity":
                     velocity_pred = model_pred
@@ -167,9 +169,8 @@ class SDXLFlowMatch(SDXLModel):
                     )
 
                 # denoise the latents
-                sigma = sigmas[i]
-                next_sigma = sigmas[i + 1]
-                latents = latents + velocity_pred * (sigma - next_sigma)
+                current_sigma, next_sigma = sigmas[i], sigmas[i + 1]
+                latents = latents + velocity_pred * (current_sigma - next_sigma)
 
                 progress_bar.update()
 

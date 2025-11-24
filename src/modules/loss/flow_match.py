@@ -61,11 +61,15 @@ def prepare_scaled_noised_latents(
     latents: torch.Tensor,
     timestep: torch.Tensor,
     noise_scale: float = 1.0,
+    clean_at_zero: bool = False,
 ):
     noise = torch.randn_like(latents) * noise_scale
 
     timestep = timestep.view([latents.size(0), *([1] * len(latents.shape[1:]))])
-    noisy_latents = timestep * latents + (1 - timestep) * noise
+    if clean_at_zero:
+        noisy_latents = (1 - timestep) * latents + timestep * noise
+    else:
+        noisy_latents = timestep * latents + (1 - timestep) * noise
 
     return NoisedLatents(noisy_latents, noise)
 
@@ -101,9 +105,13 @@ def convert_x0_to_velocity(
     noisy_latents: torch.Tensor,
     timestep: torch.Tensor,
     eps: float = 1e-5,
+    clean_at_zero: bool = False,
 ) -> torch.Tensor:
     timestep = timestep.view([x0.size(0), *([1] * len(x0.shape[1:]))])
-    velocity = (x0 - noisy_latents) / (1 - timestep).clamp_min(eps)
+    if clean_at_zero:
+        velocity = (x0 - noisy_latents) / (timestep).clamp_min(eps)
+    else:
+        velocity = (x0 - noisy_latents) / (1 - timestep).clamp_min(eps)
 
     return velocity
 
@@ -117,16 +125,22 @@ def loss_with_predicted_image(
     # random_noise: torch.Tensor,
     timestep: torch.Tensor,
     predicted_image: torch.Tensor,
+    timestep_eps: float = 1e-5,
+    clean_at_zero: bool = False,
 ) -> torch.Tensor:
     target_v = convert_x0_to_velocity(
         x0=latents,
         noisy_latents=noisy_latents,
         timestep=timestep,
+        eps=timestep_eps,
+        clean_at_zero=clean_at_zero,
     )
     v_pred = convert_x0_to_velocity(
         x0=predicted_image,
         noisy_latents=noisy_latents,
         timestep=timestep,
+        eps=timestep_eps,
+        clean_at_zero=clean_at_zero,
     )
 
     loss = F.mse_loss(
