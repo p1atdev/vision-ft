@@ -109,7 +109,7 @@ def convert_x0_to_velocity(
 ) -> torch.Tensor:
     timestep = timestep.view([x0.size(0), *([1] * len(x0.shape[1:]))])
     if clean_at_zero:
-        velocity = (x0 - noisy_latents) / (timestep).clamp_min(eps)
+        velocity = (noisy_latents - x0) / (timestep).clamp_min(eps)
     else:
         velocity = (x0 - noisy_latents) / (1 - timestep).clamp_min(eps)
 

@@ -147,8 +147,8 @@ class SDXLFlowMatch(SDXLModel):
                         x0=model_pred,
                         noisy_latents=latent_model_input,
                         timestep=batch_timestep / 1000,  # 0~1000 -> 0.0~1.0
-                        clean_at_zero=self.config.clean_at_zero,
                         eps=self.config.timestep_eps,
+                        clean_at_zero=self.config.clean_at_zero,
                     )
                 elif self.config.model_prediction == "velocity":
                     velocity_pred = model_pred
@@ -170,7 +170,7 @@ class SDXLFlowMatch(SDXLModel):
 
                 # denoise the latents
                 current_sigma, next_sigma = sigmas[i], sigmas[i + 1]
-                latents = latents + velocity_pred * (current_sigma - next_sigma)
+                latents = latents + velocity_pred * (next_sigma - current_sigma)
 
                 progress_bar.update()
 

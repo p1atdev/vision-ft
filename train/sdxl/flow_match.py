@@ -22,7 +22,7 @@ from text_to_image import SDXLForTextToImageTraining
 class SDXLForFlowMatchingTrainingConfig(SDXLFlowMatchConfig):
     max_token_length: int = 225  # 75 * 3
 
-    timestep_sampling: TimestepSamplingType = "shift_sigmoid"
+    timestep_sampling: TimestepSamplingType = "scale_shift_sigmoid"
     timestep_std: float = 0.8
     timestep_mean: float = -0.8
 
@@ -95,11 +95,11 @@ class SDXLForFlowMatchingTraining(SDXLForTextToImageTraining):
                 sample_timestep(
                     latents_shape=latents.shape,
                     device=self.accelerator.device,
+                    sampling_type=self.model_config.timestep_sampling,
                     # jit sampling
                     std=self.model_config.timestep_std,
                     mean=self.model_config.timestep_mean,
                     # if we use flux shifted sigmoid:
-                    sampling_type=self.model_config.timestep_sampling,
                     shift=3.1825,
                     sigmoid_scale=1,
                 )
